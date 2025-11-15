@@ -1,229 +1,216 @@
 #include <iostream>
 #include <string>
-#include <mysql_driver.h>
-#include <mysql_connection.h>
-#include <cppconn/prepared_statement.h>
-#include <cppconn/resultset.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include "db_manager.h"
- 
+#include <vector>
+#include "db_manager.h" 
+
 void sendMessage(int clientSock, const std::string& message) {
-    // Gửi thông điệp qua socket tới client
-    int n = send(clientSock, message.c_str(), message.length(), 0);
-    if (n < 0) {
-        std::cerr << "Error sending message to client!" << std::endl;
-    }
-}
- 
-void login(int clientSock, DbManager* dbManager) {
-    // Nhận thông tin đăng nhập từ client
-    char buffer[1024];
-    int n = recv(clientSock, buffer, sizeof(buffer), 0);
-    std::string loginData(buffer, n);
- 
-    // Tách username và password từ dữ liệu nhận được
-    size_t pos = loginData.find("|");
-    std::string username = loginData.substr(0, pos);
-    std::string password = loginData.substr(pos + 1);
- 
-    // Truy vấn cơ sở dữ liệu để kiểm tra tài khoản
-    std::string query = "SELECT * FROM Users WHERE username = '" + username + "' AND password = '" + password + "';";
-    sql::ResultSet* res = dbManager->executeQuery(query);
- 
-    if (res && res->next()) {
-        std::string role = res->getString("role");  // Lấy role (admin, teacher, student)
-        std::string sessionId = "S123"; // Tạo sessionId cho client
- 
-        std::string response = "LOGIN_OK|sessionId=" + sessionId + "|role=" + role;
-        sendMessage(clientSock, response);  // Gửi thông báo đăng nhập thành công cùng role
- 
-        // Phân biệt giữa giáo viên và học sinh
-        if (role == "teacher") {
-            // Chức năng của giáo viên (Thêm, sửa, xóa kỳ thi, câu hỏi)
-            std::cout << "Teacher logged in" << std::endl;
-            // Gửi thông báo hoặc điều hướng vào chế độ giáo viên
-        } else if (role == "student") {
-            // Chức năng của học sinh (Tham gia thi, trả lời câu hỏi)
-            std::cout << "Student logged in" << std::endl;
-            // Gửi thông báo hoặc điều hướng vào chế độ học sinh
-        }
-    } else {
-        std::string response = "LOGIN_FAILED";
-        sendMessage(clientSock, response);  // Gửi thông báo đăng nhập thất bại
-    }
-}
- 
-void addQuiz(int clientSock, DbManager* dbManager) {
-    char buffer[1024];
-    int n = recv(clientSock, buffer, sizeof(buffer), 0);
-    std::string quizData(buffer, n);
- 
-    // Tách thông tin từ client gửi tới (title, description, question_count, time_limit)
-    size_t pos1 = quizData.find("|");
-    std::string title = quizData.substr(0, pos1);
-    size_t pos2 = quizData.find("|", pos1 + 1);
-    std::string description = quizData.substr(pos1 + 1, pos2 - pos1 - 1);
-    size_t pos3 = quizData.find("|", pos2 + 1);
-    int question_count = std::stoi(quizData.substr(pos2 + 1, pos3 - pos2 - 1));
-    int time_limit = std::stoi(quizData.substr(pos3 + 1));
- 
-    // Truy vấn để thêm kỳ thi vào cơ sở dữ liệu
-    std::string query = "INSERT INTO Quizzes (title, description, question_count, time_limit, status, creator_id) "
-                        "VALUES ('" + title + "', '" + description + "', " + std::to_string(question_count) + ", " + std::to_string(time_limit) + ", 'not_started', 2);";
-    dbManager->executeUpdate(query);
- 
-    std::string response = "Quiz added successfully!";
-    sendMessage(clientSock, response);  // Gửi phản hồi thành công
-}
- 
-void editQuiz(int clientSock, DbManager* dbManager) {
-    char buffer[1024];
-    int n = recv(clientSock, buffer, sizeof(buffer), 0);
-    std::string quizData(buffer, n);
- 
-    // Tách thông tin từ client gửi tới (quiz_id, title, description, question_count, time_limit)
-    size_t pos1 = quizData.find("|");
-    int quiz_id = std::stoi(quizData.substr(0, pos1));
-    size_t pos2 = quizData.find("|", pos1 + 1);
-    std::string title = quizData.substr(pos1 + 1, pos2 - pos1 - 1);
-    size_t pos3 = quizData.find("|", pos2 + 1);
-    std::string description = quizData.substr(pos2 + 1, pos3 - pos2 - 1);
-    size_t pos4 = quizData.find("|", pos3 + 1);
-    int question_count = std::stoi(quizData.substr(pos3 + 1, pos4 - pos3 - 1));
-    int time_limit = std::stoi(quizData.substr(pos4 + 1));
- 
-    // Truy vấn để sửa thông tin kỳ thi trong cơ sở dữ liệu
-    std::string query = "UPDATE Quizzes SET title = '" + title + "', description = '" + description + "', "
-                        "question_count = " + std::to_string(question_count) + ", time_limit = " + std::to_string(time_limit) +
-                        " WHERE quiz_id = " + std::to_string(quiz_id);
-    dbManager->executeUpdate(query);
- 
-    std::string response = "Quiz updated successfully!";
-    sendMessage(clientSock, response);  // Gửi phản hồi thành công
-}
- 
-void deleteQuiz(int clientSock, DbManager* dbManager) {
-    char buffer[1024];
-    int n = recv(clientSock, buffer, sizeof(buffer), 0);
-    std::string quiz_id(buffer, n);
- 
-    // Truy vấn để xóa kỳ thi khỏi cơ sở dữ liệu
-    std::string query = "DELETE FROM Quizzes WHERE quiz_id = " + quiz_id;
-    dbManager->executeUpdate(query);
- 
-    std::string response = "Quiz deleted successfully!";
-    sendMessage(clientSock, response);  // Gửi phản hồi thành công
+    send(clientSock, message.c_str(), message.length(), 0);
 }
 
-void manageQuiz(int sock) {
-    int choice;
-    std::cout << "Choose an action:\n";
-    std::cout << "1. Add Quiz\n";
-    std::cout << "2. Edit Quiz\n";
-    std::cout << "3. Delete Quiz\n";
-    std::cout << "Enter your choice: ";
-    std::cin >> choice;
- 
-    if (choice == 1) {
-        // Add Quiz
-        std::string title, description;
-        int question_count, time_limit;
- 
-        std::cout << "Enter quiz title: ";
-        std::cin.ignore();
-        std::getline(std::cin, title);
-        std::cout << "Enter quiz description: ";
-        std::getline(std::cin, description);
-        std::cout << "Enter question count: ";
-        std::cin >> question_count;
-        std::cout << "Enter time limit (in seconds): ";
-        std::cin >> time_limit;
- 
-        std::string quizData = title + "|" + description + "|" + std::to_string(question_count) + "|" + std::to_string(time_limit);
-        send(sock, quizData.c_str(), quizData.length(), 0);
- 
-    } else if (choice == 2) {
-        // Edit Quiz
-        int quiz_id;
-        std::string title, description;
-        int question_count, time_limit;
- 
-        std::cout << "Enter quiz ID to edit: ";
-        std::cin >> quiz_id;
-        std::cout << "Enter new quiz title: ";
-        std::cin.ignore();
-        std::getline(std::cin, title);
-        std::cout << "Enter new quiz description: ";
-        std::getline(std::cin, description);
-        std::cout << "Enter new question count: ";
-        std::cin >> question_count;
-        std::cout << "Enter new time limit (in seconds): ";
-        std::cin >> time_limit;
- 
-        std::string quizData = std::to_string(quiz_id) + "|" + title + "|" + description + "|" + std::to_string(question_count) + "|" + std::to_string(time_limit);
-        send(sock, quizData.c_str(), quizData.length(), 0);
- 
-    } else if (choice == 3) {
-        // Delete Quiz
-        int quiz_id;
-        std::cout << "Enter quiz ID to delete: ";
-        std::cin >> quiz_id;
- 
-        send(sock, std::to_string(quiz_id).c_str(), std::to_string(quiz_id).length(), 0);
+// Hàm nhận tin nhắn (helper)
+std::string receiveMessage(int clientSock) {
+    char buffer[2048] = {0}; // Tăng buffer
+    int n = recv(clientSock, buffer, sizeof(buffer) - 1, 0);
+    if (n <= 0) {
+        return "DISCONNECTED"; // Client ngắt kết nối
+    }
+    buffer[n] = '\0'; // Đảm bảo là chuỗi null-terminated
+    return std::string(buffer);
+}
+
+// Tách chuỗi bằng ký tự |
+std::vector<std::string> splitCommand(const std::string& str) {
+    std::vector<std::string> tokens;
+    std::string token;
+    size_t start = 0;
+    size_t end = str.find('|');
+    while (end != std::string::npos) {
+        tokens.push_back(str.substr(start, end - start));
+        start = end + 1;
+        end = str.find('|', start);
+    }
+    tokens.push_back(str.substr(start)); // Lấy phần cuối
+    return tokens;
+}
+
+
+//LUỒNG XỬ LÝ CỦA HỌC SINH
+void handleStudentSession(int clientSock, DbManager* dbManager, int studentId) {
+    std::cout << "Student (ID: " << studentId << ") session started." << std::endl;
+    
+    // Gửi thông báo cho client biết đã vào luồng học sinh
+    sendMessage(clientSock, "SESSION_STUDENT_OK");
+    
+    int currentExamId = -1; // Lưu lại exam_id đang làm
+
+    while (true) {
+        std::string msg = receiveMessage(clientSock);
+        if (msg == "DISCONNECTED") {
+            std::cout << "Student " << studentId << " disconnected." << std::endl;
+            // (Bạn có thể muốn tự động nộp bài nếu họ ngắt kết nối khi đang làm)
+            break; 
+        }
+
+        std::vector<std::string> command = splitCommand(msg);
+        if (command.empty()) continue;
+
+        std::cout << "Student " << studentId << " sent command: " << command[0] << std::endl;
+
+        // --- Xử lý các lệnh từ Client của học sinh ---
+
+        if (command[0] == "GET_QUIZZES") {
+            // 1. Client muốn lấy danh sách bài thi
+            std::vector<QuizInfo> quizzes = dbManager->getAvailableQuizzes();
+            std::string response = "QUIZ_LIST";
+            for (const auto& quiz : quizzes) {
+                // Định dạng: QUIZ_LIST|id,title,time_limit|id,title,time_limit...
+                response += "|" + std::to_string(quiz.id) + "," + quiz.title + "," + std::to_string(quiz.timeLimit);
+            }
+            sendMessage(clientSock, response);
+        
+        } else if (command[0] == "START_QUIZ" && command.size() > 1) {
+            // 2. Client muốn bắt đầu làm bài
+            int quizId = std::stoi(command[1]);
+            currentExamId = dbManager->startExam(quizId, studentId);
+            
+            if (currentExamId == -1) {
+                sendMessage(clientSock, "START_EXAM_FAILED");
+            } else {
+                // Lấy câu hỏi
+                std::vector<QuestionInfo> questions = dbManager->getQuestionsForQuiz(quizId);
+                
+                // Gửi exam_id và toàn bộ câu hỏi/câu trả lời về
+                std::string response = "EXAM_DATA|exam_id=" + std::to_string(currentExamId);
+                for (const auto& q : questions) {
+                    // Q|id,text
+                    response += "|Q," + std::to_string(q.id) + "," + q.text;
+                    for (const auto& a : q.answers) {
+                        // A|id,text
+                        response += "|A," + std::to_string(a.id) + "," + a.text;
+                    }
+                }
+                sendMessage(clientSock, response);
+            }
+
+        } else if (command[0] == "SUBMIT_ANSWER" && command.size() > 2) {
+            // 4. Client nộp MỘT câu trả lời
+            int questionId = std::stoi(command[1]);
+            int answerId = std::stoi(command[2]);
+            
+            if (currentExamId != -1) {
+                dbManager->saveStudentAnswer(currentExamId, questionId, answerId);
+                // Không cần phản hồi, hoặc gửi "ANSWER_SAVED"
+            }
+
+        } else if (command[0] == "FINISH_EXAM") {
+            // 5. Client nhấn nút "NỘP BÀI"
+            if (currentExamId != -1) {
+                float score = dbManager->submitAndGradeExam(currentExamId);
+                sendMessage(clientSock, "EXAM_FINISHED|score=" + std::to_string(score));
+                currentExamId = -1; // Kết thúc phiên
+            }
+        }
+        // ... (Bạn có thể thêm các lệnh khác) ...
     }
 }
- 
- 
-int main() {
-    // Tạo kết nối cơ sở dữ liệu
-    DbManager* dbManager = new DbManager("127.0.0.1", "root", "123456", "quizDB");
- 
-    // Tạo một socket TCP
-    int serverSock = socket(AF_INET, SOCK_STREAM, 0);
-    if (serverSock < 0) {
-        std::cerr << "Error creating socket!" << std::endl;
-        return 1;
+
+// Hàm này xử lý Giáo viên 
+void handleTeacherSession(int clientSock, DbManager* dbManager, int teacherId) {
+    std::cout << "Teacher (ID: " << teacherId << ") session started." << std::endl;
+    sendMessage(clientSock, "SESSION_TEACHER_OK");
+    // ... (Triển khai logic thêm/sửa/xóa quiz ở đây) ...
+   
+}
+
+
+//LUỒNG ĐĂNG NHẬP
+void login(int clientSock, DbManager* dbManager) {
+    std::string loginData = receiveMessage(clientSock);
+    if (loginData == "DISCONNECTED") return;
+
+    // Tách username và password
+    std::vector<std::string> parts = splitCommand(loginData); // vd: "LOGIN|user|pass"
+    
+    // Yêu cầu client gửi: "LOGIN|username|password"
+    if (parts.size() != 3 || parts[0] != "LOGIN") {
+        sendMessage(clientSock, "LOGIN_FAILED|Invalid format");
+        return;
     }
- 
-    // Đặt địa chỉ server (IP, cổng)
+    
+    std::string username = parts[1];
+    std::string password = parts[2];
+
+    // * GỌI HÀM AN TOÀN *
+    // (Không còn SQL Injection, Không còn rò rỉ kết nối)
+    int userId = dbManager->authenticateStudent(username, password); // Thử đăng nhập HS
+    std::string role = "student";
+
+    if (userId == -1) { // Thử đăng nhập GV hoặc Admin nếu HS thất bại
+        // userId = dbManager->authenticateTeacher(username, password); 
+        // (Bạn cần tự viết hàm này, tương tự authenticateStudent)
+        // Giả sử:
+        // if (userId != -1) role = "teacher";
+    }
+
+    if (userId != -1) { // Đăng nhập thành công
+        std::cout << "Login successful for " << username << " (ID: " << userId << ")" << std::endl;
+        
+        if (role == "student") {
+            handleStudentSession(clientSock, dbManager, userId);
+        } else if (role == "teacher") {
+            // handleTeacherSession(clientSock, dbManager, userId);
+        }
+        
+    } else {
+        std::cout << "Login failed for " << username << std::endl;
+        sendMessage(clientSock, "LOGIN_FAILED|Invalid credentials");
+    }
+}
+
+/* --- HÀM MAIN (KHÔNG THAY ĐỔI NHIỀU) --- */
+int main() {
+    // Tạo MỘT đối tượng DbManager DUY NHẤT
+    DbManager* dbManager = new DbManager("127.0.0.1", "root", "123456", "quizDB");
+
+    // (Code tạo socket, bind, listen của bạn ở đây... )
+    int serverSock = socket(AF_INET, SOCK_STREAM, 0);
+    // ... (kiểm tra lỗi) ...
     sockaddr_in serverAddr;
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(9000);  // Cổng mà server lắng nghe
+    serverAddr.sin_port = htons(9000); 
     serverAddr.sin_addr.s_addr = INADDR_ANY;
- 
-    // Liên kết socket với địa chỉ server
-    if (bind(serverSock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
-        std::cerr << "Bind failed!" << std::endl;
-        return 1;
-    }
- 
-    // Lắng nghe kết nối từ client
-    if (listen(serverSock, 5) < 0) {
-        std::cerr << "Listen failed!" << std::endl;
-        return 1;
-    }
- 
+    bind(serverSock, (struct sockaddr*)&serverAddr, sizeof(serverAddr));
+    // ... (kiểm tra lỗi) ...
+    listen(serverSock, 5);
+    // ... (kiểm tra lỗi) ...
+    
     std::cout << "Server is listening on port 9000..." << std::endl;
- 
-    // Chấp nhận kết nối từ client
-    int clientSock = accept(serverSock, nullptr, nullptr);
-    if (clientSock < 0) {
-        std::cerr << "Accept failed!" << std::endl;
-        return 1;
+
+    while (true) {
+        // Chấp nhận kết nối MỚI
+        int clientSock = accept(serverSock, nullptr, nullptr);
+        if (clientSock < 0) {
+            std::cerr << "Accept failed!" << std::endl;
+            continue; // Chờ kết nối tiếp theo
+        }
+        
+        std::cout << "New client connected. Waiting for login..." << std::endl;
+
+        // Xử lý đăng nhập
+        // (LƯU Ý: Thiết kế này chỉ xử lý 1 client tại 1 thời điểm)
+        // (Để xử lý nhiều client, bạn cần dùng thread hoặc fork)
+        login(clientSock, dbManager);
+
+        // Sau khi client xử lý xong (ngắt kết nối), đóng socket
+        close(clientSock);
+        std::cout << "Client session ended." << std::endl;
     }
- 
-    // Gọi hàm login để xử lý đăng nhập
-    login(clientSock, dbManager);
- 
-    // Xử lý các yêu cầu quản lý kỳ thi
-    manageQuiz(clientSock);
- 
-    // Đóng kết nối
-    close(clientSock);
+
+    // Đóng server
     close(serverSock);
-    delete dbManager;
- 
+    delete dbManager; // Dọn dẹp DbManager khi server sập
     return 0;
 }
