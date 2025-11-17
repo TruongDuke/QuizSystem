@@ -1,140 +1,495 @@
 #include <iostream>
+
 #include <string>
+
+#include <vector>
+
+#include <sstream>
+
+#include <limits>
+ 
 #include <sys/socket.h>
+
 #include <arpa/inet.h>
-#include <unistd.h>  // Bao gồm thư viện unistd.h để sử dụng close()
+
+#include <unistd.h>
  
-// Khai báo hàm manageQuiz trước khi gọi
-void manageQuiz(int sock);
+using namespace std;
  
-void login(int sock) {
-    std::string username;
-    std::string password;
+// ==================================================
+
+// Helpers: sendLine / recvLine / split
+
+// ==================================================
  
-    // Nhận username và password từ bàn phím
-    std::cout << "Enter username: ";
-    std::cin >> username;
-    std::cout << "Enter password: ";
-    std::cin >> password;
- 
-    // Gửi yêu cầu đăng nhập tới server, dùng ký tự "|" để phân tách
-    std::string loginMessage = username + "|" + password;
-    int sent = send(sock, loginMessage.c_str(), loginMessage.length(), 0);
-    if (sent < 0) {
-        std::cerr << "Error sending message to server!" << std::endl;
-        return;
-    }
- 
-    // Nhận phản hồi từ server
-    char buffer[1024];
-    int n = recv(sock, buffer, sizeof(buffer), 0);
-    if (n < 0) {
-        std::cerr << "Error receiving message from server!" << std::endl;
-        return;
-    }
- 
-    std::string response(buffer, n);
-    std::cout << "Server response: " << response << std::endl;
- 
-    // Phân tích phản hồi và xác định role
-    size_t pos = response.find("|role=");
-    if (pos != std::string::npos) {
-        std::string role = response.substr(pos + 5);  // Lấy phần role từ phản hồi
-        if (role == "teacher") {
-            std::cout << "You are logged in as a Teacher." << std::endl;
-            // Mở giao diện chức năng cho giáo viên (thêm, sửa, xóa kỳ thi)
-            manageQuiz(sock); // Ví dụ: thêm, sửa kỳ thi
-        } else if (role == "student") {
-            std::cout << "You are logged in as a Student." << std::endl;
-            // Mở giao diện chức năng cho học sinh (tham gia kỳ thi)
-             // Ví dụ: tham gia kỳ thi
+string recvLine(int sock) {
+
+    string line;
+
+    char c;
+
+    while (true) {
+
+        int n = recv(sock, &c, 1, 0);
+
+        if (n <= 0) {
+
+            return "";
+
         }
+
+        if (c == '\n') break;
+
+        line.push_back(c);
+
     }
+
+    return line;
+
 }
  
-// Định nghĩa hàm manageQuiz
-void manageQuiz(int sock) {
-    int choice;
-    std::cout << "Choose an action:\n";
-    std::cout << "1. Add Quiz\n";
-    std::cout << "2. Edit Quiz\n";
-    std::cout << "3. Delete Quiz\n";
-    std::cout << "Enter your choice: ";
-    std::cin >> choice;
- 
-    if (choice == 1) {
-        // Add Quiz
-        std::string title, description;
-        int question_count, time_limit;
- 
-        std::cout << "Enter quiz title: ";
-        std::cin.ignore();
-        std::getline(std::cin, title);
-        std::cout << "Enter quiz description: ";
-        std::getline(std::cin, description);
-        std::cout << "Enter question count: ";
-        std::cin >> question_count;
-        std::cout << "Enter time limit (in seconds): ";
-        std::cin >> time_limit;
- 
-        std::string quizData = title + "|" + description + "|" + std::to_string(question_count) + "|" + std::to_string(time_limit);
-        send(sock, quizData.c_str(), quizData.length(), 0);
- 
-    } else if (choice == 2) {
-        // Edit Quiz
-        int quiz_id;
-        std::string title, description;
-        int question_count, time_limit;
- 
-        std::cout << "Enter quiz ID to edit: ";
-        std::cin >> quiz_id;
-        std::cout << "Enter new quiz title: ";
-        std::cin.ignore();
-        std::getline(std::cin, title);
-        std::cout << "Enter new quiz description: ";
-        std::getline(std::cin, description);
-        std::cout << "Enter new question count: ";
-        std::cin >> question_count;
-        std::cout << "Enter new time limit (in seconds): ";
-        std::cin >> time_limit;
- 
-        std::string quizData = std::to_string(quiz_id) + "|" + title + "|" + description + "|" + std::to_string(question_count) + "|" + std::to_string(time_limit);
-        send(sock, quizData.c_str(), quizData.length(), 0);
- 
-    } else if (choice == 3) {
-        // Delete Quiz
-        int quiz_id;
-        std::cout << "Enter quiz ID to delete: ";
-        std::cin >> quiz_id;
- 
-        send(sock, std::to_string(quiz_id).c_str(), std::to_string(quiz_id).length(), 0);
-    }
+void sendLine(int sock, const string &msg) {
+
+    string data = msg + "\n";
+
+    send(sock, data.c_str(), data.size(), 0);
+
 }
+ 
+vector<string> split(const string &s, char delim) {
+
+    vector<string> out;
+
+    stringstream ss(s);
+
+    string item;
+
+    while (getline(ss, item, delim)) out.push_back(item);
+
+    return out;
+
+}
+ 
+// Forward declaration
+
+void teacherMenu(int sock);
+
+void manageQuestionsMenu(int sock, int quizId);
+ 
+// ==================================================
+
+// Login
+
+// ==================================================
+ 
+string doLogin(int sock) {
+
+    string username, password;
+ 
+    cout << "Enter username: ";
+
+    cin >> username;
+
+    cout << "Enter password: ";
+
+    cin >> password;
+ 
+    string msg = "LOGIN|" + username + "|" + password;
+
+    sendLine(sock, msg);
+ 
+    string resp = recvLine(sock);
+
+    if (resp.empty()) {
+
+        cerr << "No response from server\n";
+
+        return "";
+
+    }
+ 
+    cout << "Server: " << resp << endl;
+ 
+    auto parts = split(resp, '|');
+
+    if (parts.size() == 0) return "";
+ 
+    if (parts[0] == "LOGIN_OK") {
+
+        string role = "";
+
+        for (auto &p : parts) {
+
+            if (p.rfind("role=", 0) == 0) {
+
+                role = p.substr(5);
+
+            }
+
+        }
+
+        cout << "Logged in as: " << role << endl;
+
+        return role;
+
+    }
+ 
+    cerr << "Login failed.\n";
+
+    return "";
+
+}
+ 
+// ==================================================
+
+// Teacher: Manage Questions Submenu
+
+// ==================================================
+ 
+void manageQuestionsMenu(int sock, int quizId) {
+
+    while (true) {
+
+        int choice;
+ 
+        cout << "\n=========== MANAGE QUESTIONS ===========\n";
+
+        cout << "Quiz ID: " << quizId << "\n";
+
+        cout << "1. View questions\n";
+
+        cout << "2. Add question\n";
+
+        cout << "3. Edit question\n";
+
+        cout << "4. Delete question\n";
+
+        cout << "5. Back\n";
+
+        cout << "========================================\n";
+
+        cout << "Enter choice: ";
+
+        cin >> choice;
+ 
+        if (choice == 1) {
+
+            sendLine(sock, "LIST_QUESTIONS|" + to_string(quizId));
+
+            cout << "Server: " << recvLine(sock) << endl;
+ 
+        } else if (choice == 2) {
+
+            string q, o1, o2, o3, o4;
+
+            int correct;
+ 
+            cin.ignore();
+
+            cout << "Enter question text: ";
+
+            getline(cin, q);
+ 
+            cout << "Option 1: "; getline(cin, o1);
+
+            cout << "Option 2: "; getline(cin, o2);
+
+            cout << "Option 3: "; getline(cin, o3);
+
+            cout << "Option 4: "; getline(cin, o4);
+ 
+            cout << "Correct option (1-4): ";
+
+            cin >> correct;
+ 
+            string msg = 
+
+                "ADD_QUESTION|" + to_string(quizId) + "|" + q + "|" + 
+
+                o1 + "|" + o2 + "|" + o3 + "|" + o4 + "|" +
+
+                to_string(correct);
+ 
+            sendLine(sock, msg);
+
+            cout << "Server: " << recvLine(sock) << endl;
+ 
+        } else if (choice == 3) {
+
+            int qid, correct;
+
+            string q, o1, o2, o3, o4;
+ 
+            cout << "Enter question ID to edit: ";
+
+            cin >> qid;
+
+            cin.ignore();
+ 
+            cout << "New text: "; getline(cin, q);
+
+            cout << "New opt1: "; getline(cin, o1);
+
+            cout << "New opt2: "; getline(cin, o2);
+
+            cout << "New opt3: "; getline(cin, o3);
+
+            cout << "New opt4: "; getline(cin, o4);
+ 
+            cout << "Correct option: ";
+
+            cin >> correct;
+ 
+            string msg =
+
+                "EDIT_QUESTION|" + to_string(qid) + "|" + q + "|" +
+
+                o1 + "|" + o2 + "|" + o3 + "|" + o4 + "|" +
+
+                to_string(correct);
+ 
+            sendLine(sock, msg);
+
+            cout << "Server: " << recvLine(sock) << endl;
+ 
+        } else if (choice == 4) {
+
+            int qid;
+
+            cout << "Enter question ID: ";
+
+            cin >> qid;
+ 
+            sendLine(sock, "DELETE_QUESTION|" + to_string(qid));
+
+            cout << "Server: " << recvLine(sock) << endl;
+ 
+        } else if (choice == 5) {
+
+            break;
+
+        }
+
+    }
+
+}
+ 
+// ==================================================
+
+// Teacher Menu (FULL VERSION)
+
+// ==================================================
+ 
+void teacherMenu(int sock) {
+
+    while (true) {
+
+        int choice;
+ 
+        cout << "\n====================================\n";
+
+        cout << "           TEACHER MENU\n";
+
+        cout << "====================================\n";
+
+        cout << "1. View all quizzes\n";
+
+        cout << "2. Add new quiz\n";
+
+        cout << "3. Edit quiz\n";
+
+        cout << "4. Delete quiz\n";
+
+        cout << "5. Manage questions of a quiz\n";
+
+        cout << "6. View exam results\n";
+
+        cout << "7. Logout\n";
+
+        cout << "====================================\n";
+
+        cout << "Enter your choice: ";
+
+        cin >> choice;
+ 
+        if (choice == 1) {
+
+            sendLine(sock, "LIST_QUIZZES");
+
+            cout << "Server: " << recvLine(sock) << endl;
+ 
+        } else if (choice == 2) {
+
+            string title, desc;
+
+            int count, timeLimit;
+ 
+            cin.ignore();
+
+            cout << "Enter quiz title: ";
+
+            getline(cin, title);
+ 
+            cout << "Enter description: ";
+
+            getline(cin, desc);
+ 
+            cout << "Enter question count: ";
+
+            cin >> count;
+ 
+            cout << "Enter time limit: ";
+
+            cin >> timeLimit;
+ 
+            string msg = 
+
+                "ADD_QUIZ|" + title + "|" + desc + "|" +
+
+                to_string(count) + "|" + to_string(timeLimit);
+ 
+            sendLine(sock, msg);
+
+            cout << "Server: " << recvLine(sock) << endl;
+ 
+        } else if (choice == 3) {
+
+            int quizId;
+
+            string title, desc;
+
+            int count, timeLimit;
+ 
+            cout << "Enter quiz ID to edit: ";
+
+            cin >> quizId;
+ 
+            cin.ignore();
+
+            cout << "New title: ";
+
+            getline(cin, title);
+ 
+            cout << "New description: ";
+
+            getline(cin, desc);
+ 
+            cout << "New question count: ";
+
+            cin >> count;
+ 
+            cout << "New time limit: ";
+
+            cin >> timeLimit;
+ 
+            string msg =
+
+                "EDIT_QUIZ|" + to_string(quizId) + "|" +
+
+                title + "|" + desc + "|" +
+
+                to_string(count) + "|" +
+
+                to_string(timeLimit);
+ 
+            sendLine(sock, msg);
+
+            cout << "Server: " << recvLine(sock) << endl;
+ 
+        } else if (choice == 4) {
+
+            int quizId;
+
+            cout << "Enter quiz ID to delete: ";
+
+            cin >> quizId;
+ 
+            sendLine(sock, "DELETE_QUIZ|" + to_string(quizId));
+
+            cout << "Server: " << recvLine(sock) << endl;
+ 
+        } else if (choice == 5) {
+
+            int quizId;
+
+            cout << "Enter quiz ID to manage questions: ";
+
+            cin >> quizId;
+ 
+            manageQuestionsMenu(sock, quizId);
+ 
+        } else if (choice == 6) {
+
+            sendLine(sock, "LIST_EXAMS");
+
+            cout << "Server: " << recvLine(sock) << endl;
+ 
+        } else if (choice == 7) {
+
+            sendLine(sock, "QUIT");
+
+            cout << "Logging out...\n";
+
+            break;
+ 
+        } else {
+
+            cout << "Invalid choice.\n";
+
+        }
+
+    }
+
+}
+ 
+// ==================================================
+
+// MAIN
+
+// ==================================================
  
 int main() {
+
     int sock = socket(AF_INET, SOCK_STREAM, 0);
+
     if (sock < 0) {
-        std::cerr << "Socket creation failed!" << std::endl;
+
+        cerr << "Socket creation failed\n";
+
         return 1;
+
     }
  
-    sockaddr_in serverAddr;
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(9000);  // Cổng mà server lắng nghe
-    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");  // Kết nối vào localhost
+    sockaddr_in addr{};
+
+    addr.sin_family = AF_INET;
+
+    addr.sin_port   = htons(9000);
+
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
  
-    if (connect(sock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
-        std::cerr << "Connection failed!" << std::endl;
+    if (connect(sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
+
+        cerr << "Connection failed\n";
+
         return 1;
+
     }
  
-    // Gửi yêu cầu đăng nhập tới server
-    login(sock);
+    string role = doLogin(sock);
+
+    if (role == "teacher") {
+
+        teacherMenu(sock);
+
+    } else if (role == "student") {
+
+        cout << "Student menu not implemented yet.\n";
+
+    }
  
-    // Sau khi đăng nhập thành công, cho phép quản lý kỳ thi nếu là giáo viên
-    manageQuiz(sock);
- 
-    // Đóng kết nối socket
-    close(sock);  // Đảm bảo close() được gọi để đóng kết nối với server
+    close(sock);
+
     return 0;
+
 }
