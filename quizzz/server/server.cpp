@@ -1,216 +1,640 @@
 #include <iostream>
 #include <string>
+#include <vector>
+#include <sstream>
+ 
+#include <mysql_driver.h>
+#include <mysql_connection.h>
+#include <cppconn/prepared_statement.h>
+#include <cppconn/resultset.h>
+ 
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <vector>
-#include "db_manager.h" 
-
-void sendMessage(int clientSock, const std::string& message) {
-    send(clientSock, message.c_str(), message.length(), 0);
-}
-
-// Hàm nhận tin nhắn (helper)
-std::string receiveMessage(int clientSock) {
-    char buffer[2048] = {0}; // Tăng buffer
-    int n = recv(clientSock, buffer, sizeof(buffer) - 1, 0);
-    if (n <= 0) {
-        return "DISCONNECTED"; // Client ngắt kết nối
-    }
-    buffer[n] = '\0'; // Đảm bảo là chuỗi null-terminated
-    return std::string(buffer);
-}
-
-// Tách chuỗi bằng ký tự |
-std::vector<std::string> splitCommand(const std::string& str) {
-    std::vector<std::string> tokens;
-    std::string token;
-    size_t start = 0;
-    size_t end = str.find('|');
-    while (end != std::string::npos) {
-        tokens.push_back(str.substr(start, end - start));
-        start = end + 1;
-        end = str.find('|', start);
-    }
-    tokens.push_back(str.substr(start)); // Lấy phần cuối
-    return tokens;
-}
-
-
-//LUỒNG XỬ LÝ CỦA HỌC SINH
-void handleStudentSession(int clientSock, DbManager* dbManager, int studentId) {
-    std::cout << "Student (ID: " << studentId << ") session started." << std::endl;
-    
-    // Gửi thông báo cho client biết đã vào luồng học sinh
-    sendMessage(clientSock, "SESSION_STUDENT_OK");
-    
-    int currentExamId = -1; // Lưu lại exam_id đang làm
-
+ 
+#include "db_manager.h"
+ 
+using namespace std;
+ 
+// ==================================================
+// Helpers: sendLine / recvLine / split / escapeSql
+// ==================================================
+ 
+string recvLine(int sock) {
+    string line;
+    char c;
     while (true) {
-        std::string msg = receiveMessage(clientSock);
-        if (msg == "DISCONNECTED") {
-            std::cout << "Student " << studentId << " disconnected." << std::endl;
-            // (Bạn có thể muốn tự động nộp bài nếu họ ngắt kết nối khi đang làm)
-            break; 
+        int n = recv(sock, &c, 1, 0);
+        if (n <= 0) {
+            return "";
         }
-
-        std::vector<std::string> command = splitCommand(msg);
-        if (command.empty()) continue;
-
-        std::cout << "Student " << studentId << " sent command: " << command[0] << std::endl;
-
-        // --- Xử lý các lệnh từ Client của học sinh ---
-
-        if (command[0] == "GET_QUIZZES") {
-            // 1. Client muốn lấy danh sách bài thi
-            std::vector<QuizInfo> quizzes = dbManager->getAvailableQuizzes();
-            std::string response = "QUIZ_LIST";
-            for (const auto& quiz : quizzes) {
-                // Định dạng: QUIZ_LIST|id,title,time_limit|id,title,time_limit...
-                response += "|" + std::to_string(quiz.id) + "," + quiz.title + "," + std::to_string(quiz.timeLimit);
-            }
-            sendMessage(clientSock, response);
-        
-        } else if (command[0] == "START_QUIZ" && command.size() > 1) {
-            // 2. Client muốn bắt đầu làm bài
-            int quizId = std::stoi(command[1]);
-            currentExamId = dbManager->startExam(quizId, studentId);
-            
-            if (currentExamId == -1) {
-                sendMessage(clientSock, "START_EXAM_FAILED");
-            } else {
-                // Lấy câu hỏi
-                std::vector<QuestionInfo> questions = dbManager->getQuestionsForQuiz(quizId);
-                
-                // Gửi exam_id và toàn bộ câu hỏi/câu trả lời về
-                std::string response = "EXAM_DATA|exam_id=" + std::to_string(currentExamId);
-                for (const auto& q : questions) {
-                    // Q|id,text
-                    response += "|Q," + std::to_string(q.id) + "," + q.text;
-                    for (const auto& a : q.answers) {
-                        // A|id,text
-                        response += "|A," + std::to_string(a.id) + "," + a.text;
-                    }
-                }
-                sendMessage(clientSock, response);
-            }
-
-        } else if (command[0] == "SUBMIT_ANSWER" && command.size() > 2) {
-            // 4. Client nộp MỘT câu trả lời
-            int questionId = std::stoi(command[1]);
-            int answerId = std::stoi(command[2]);
-            
-            if (currentExamId != -1) {
-                dbManager->saveStudentAnswer(currentExamId, questionId, answerId);
-                // Không cần phản hồi, hoặc gửi "ANSWER_SAVED"
-            }
-
-        } else if (command[0] == "FINISH_EXAM") {
-            // 5. Client nhấn nút "NỘP BÀI"
-            if (currentExamId != -1) {
-                float score = dbManager->submitAndGradeExam(currentExamId);
-                sendMessage(clientSock, "EXAM_FINISHED|score=" + std::to_string(score));
-                currentExamId = -1; // Kết thúc phiên
-            }
-        }
-        // ... (Bạn có thể thêm các lệnh khác) ...
+        if (c == '\n') break;
+        line.push_back(c);
+    }
+    return line;
+}
+ 
+void sendLine(int sock, const string &msg) {
+    string data = msg + "\n";
+    int n = send(sock, data.c_str(), data.size(), 0);
+    if (n < 0) {
+        cerr << "[NET] Error sending data to client\n";
     }
 }
-
-// Hàm này xử lý Giáo viên 
-void handleTeacherSession(int clientSock, DbManager* dbManager, int teacherId) {
-    std::cout << "Teacher (ID: " << teacherId << ") session started." << std::endl;
-    sendMessage(clientSock, "SESSION_TEACHER_OK");
-    // ... (Triển khai logic thêm/sửa/xóa quiz ở đây) ...
-   
+ 
+vector<string> split(const string &s, char delim) {
+    vector<string> out;
+    stringstream ss(s);
+    string item;
+    while (getline(ss, item, delim)) out.push_back(item);
+    return out;
 }
-
-
-//LUỒNG ĐĂNG NHẬP
-void login(int clientSock, DbManager* dbManager) {
-    std::string loginData = receiveMessage(clientSock);
-    if (loginData == "DISCONNECTED") return;
-
-    // Tách username và password
-    std::vector<std::string> parts = splitCommand(loginData); // vd: "LOGIN|user|pass"
-    
-    // Yêu cầu client gửi: "LOGIN|username|password"
+ 
+// escape đơn giản: thay ' thành '' để tránh lỗi SQL
+string escapeSql(const string &s) {
+    string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        if (c == '\'') out += "''";
+        else out.push_back(c);
+    }
+    return out;
+}
+ 
+// ==================================================
+// LOGIN
+// ==================================================
+ 
+// message client gửi: LOGIN|username|password
+bool handleLogin(int clientSock, DbManager *db, string &outRole) {
+    string line = recvLine(clientSock);
+    if (line.empty()) {
+        cerr << "[LOGIN] client disconnected before login\n";
+        return false;
+    }
+ 
+    auto parts = split(line, '|');
     if (parts.size() != 3 || parts[0] != "LOGIN") {
-        sendMessage(clientSock, "LOGIN_FAILED|Invalid format");
+        sendLine(clientSock, "LOGIN_FAIL|reason=bad_format");
+        return false;
+    }
+ 
+    string username = escapeSql(parts[1]);
+    string password = escapeSql(parts[2]);
+ 
+    string q =
+        "SELECT * FROM Users "
+        "WHERE username = '" + username +
+        "' AND password = '" + password + "';";
+ 
+    sql::ResultSet *res = nullptr;
+    try {
+        res = db->executeQuery(q);
+    } catch (sql::SQLException &e) {
+        cerr << "[LOGIN] SQL error: " << e.what() << endl;
+        sendLine(clientSock, "LOGIN_FAIL|reason=sql_error");
+        return false;
+    }
+ 
+    bool ok = false;
+    if (res && res->next()) {
+        string role = res->getString("role");
+        outRole = role;
+        string sessionId = "S123"; // demo
+ 
+        sendLine(clientSock, "LOGIN_OK|sessionId=" + sessionId + "|role=" + role);
+        cout << "[LOGIN] user logged in as " << role << endl;
+        ok = true;
+    } else {
+        sendLine(clientSock, "LOGIN_FAIL|reason=wrong_credentials");
+    }
+ 
+    delete res; // tạm chấp nhận leak connection bên trong
+    return ok;
+}
+ 
+// ==================================================
+// QUIZZES
+// ==================================================
+ 
+// LIST_QUIZZES
+void handleListQuizzes(int sock, DbManager *db) {
+    string q =
+        "SELECT quiz_id, title, question_count, time_limit, status "
+        "FROM Quizzes;";
+ 
+    try {
+        sql::ResultSet *res = db->executeQuery(q);
+        if (!res) {
+            sendLine(sock, "LIST_QUIZZES_FAIL|reason=db_error");
+            return;
+        }
+ 
+        // format đơn giản: QUIZZES|id:title(count,time,status);id2:...
+        stringstream ss;
+        ss << "QUIZZES|";
+        bool first = true;
+        while (res->next()) {
+            if (!first) ss << ";";
+            first = false;
+            int id = res->getInt("quiz_id");
+            string title = res->getString("title");
+            int cnt = res->getInt("question_count");
+            int t = res->getInt("time_limit");
+            string status = res->getString("status");
+ 
+            ss << id << ":" << title << "("
+               << cnt << "Q," << t << "s," << status << ")";
+        }
+        delete res;
+ 
+        sendLine(sock, ss.str());
+    } catch (sql::SQLException &e) {
+        cerr << "[LIST_QUIZZES] SQL error: " << e.what() << endl;
+        sendLine(sock, "LIST_QUIZZES_FAIL|reason=sql_error");
+    }
+}
+ 
+// ADD_QUIZ|title|desc|count|time
+void handleAddQuiz(const vector<string> &parts, int sock, DbManager *db) {
+    if (parts.size() != 5) {
+        sendLine(sock, "ADD_QUIZ_FAIL|reason=bad_format");
         return;
     }
-    
-    std::string username = parts[1];
-    std::string password = parts[2];
-
-    // * GỌI HÀM AN TOÀN *
-    // (Không còn SQL Injection, Không còn rò rỉ kết nối)
-    int userId = dbManager->authenticateStudent(username, password); // Thử đăng nhập HS
-    std::string role = "student";
-
-    if (userId == -1) { // Thử đăng nhập GV hoặc Admin nếu HS thất bại
-        // userId = dbManager->authenticateTeacher(username, password); 
-        // (Bạn cần tự viết hàm này, tương tự authenticateStudent)
-        // Giả sử:
-        // if (userId != -1) role = "teacher";
+ 
+    string title = escapeSql(parts[1]);
+    string desc  = escapeSql(parts[2]);
+ 
+    int count = 0, timeLimit = 0;
+    try {
+        count = stoi(parts[3]);
+        timeLimit = stoi(parts[4]);
+    } catch (...) {
+        sendLine(sock, "ADD_QUIZ_FAIL|reason=bad_number");
+        return;
     }
-
-    if (userId != -1) { // Đăng nhập thành công
-        std::cout << "Login successful for " << username << " (ID: " << userId << ")" << std::endl;
-        
-        if (role == "student") {
-            handleStudentSession(clientSock, dbManager, userId);
-        } else if (role == "teacher") {
-            // handleTeacherSession(clientSock, dbManager, userId);
-        }
-        
-    } else {
-        std::cout << "Login failed for " << username << std::endl;
-        sendMessage(clientSock, "LOGIN_FAILED|Invalid credentials");
+ 
+    string insertSql =
+        "INSERT INTO Quizzes (title, description, question_count, time_limit, "
+        "status, creator_id) VALUES ('" +
+        title + "', '" + desc + "', " +
+        to_string(count) + ", " + to_string(timeLimit) +
+        ", 'not_started', 2);";
+ 
+    cout << "[ADD_QUIZ] SQL: " << insertSql << endl;
+    int newId = db->executeInsertAndGetId(insertSql);
+    if (newId == 0) {
+        sendLine(sock, "ADD_QUIZ_FAIL|reason=sql_error");
+        return;
+    }
+ 
+    sendLine(sock, "ADD_QUIZ_OK|quizId=" + to_string(newId));
+    cout << "[ADD_QUIZ] quiz added, id=" << newId << endl;
+}
+ 
+// EDIT_QUIZ|quizId|title|desc|count|time
+void handleEditQuiz(const vector<string> &parts, int sock, DbManager *db) {
+    if (parts.size() != 6) {
+        sendLine(sock, "EDIT_QUIZ_FAIL|reason=bad_format");
+        return;
+    }
+ 
+    int quizId, count, timeLimit;
+    try {
+        quizId = stoi(parts[1]);
+        count  = stoi(parts[4]);
+        timeLimit = stoi(parts[5]);
+    } catch (...) {
+        sendLine(sock, "EDIT_QUIZ_FAIL|reason=bad_number");
+        return;
+    }
+ 
+    string title = escapeSql(parts[2]);
+    string desc  = escapeSql(parts[3]);
+ 
+    string q =
+        "UPDATE Quizzes SET "
+        "title='" + title + "', "
+        "description='" + desc + "', "
+        "question_count=" + to_string(count) + ", "
+        "time_limit=" + to_string(timeLimit) +
+        " WHERE quiz_id=" + to_string(quizId) + ";";
+ 
+    try {
+        db->executeUpdate(q);
+        sendLine(sock, "EDIT_QUIZ_OK");
+    } catch (...) {
+        sendLine(sock, "EDIT_QUIZ_FAIL|reason=sql_error");
     }
 }
-
-/* --- HÀM MAIN (KHÔNG THAY ĐỔI NHIỀU) --- */
-int main() {
-    // Tạo MỘT đối tượng DbManager DUY NHẤT
-    DbManager* dbManager = new DbManager("127.0.0.1", "root", "123456", "quizDB");
-
-    // (Code tạo socket, bind, listen của bạn ở đây... )
-    int serverSock = socket(AF_INET, SOCK_STREAM, 0);
-    // ... (kiểm tra lỗi) ...
-    sockaddr_in serverAddr;
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(9000); 
-    serverAddr.sin_addr.s_addr = INADDR_ANY;
-    bind(serverSock, (struct sockaddr*)&serverAddr, sizeof(serverAddr));
-    // ... (kiểm tra lỗi) ...
-    listen(serverSock, 5);
-    // ... (kiểm tra lỗi) ...
-    
-    std::cout << "Server is listening on port 9000..." << std::endl;
-
-    while (true) {
-        // Chấp nhận kết nối MỚI
-        int clientSock = accept(serverSock, nullptr, nullptr);
-        if (clientSock < 0) {
-            std::cerr << "Accept failed!" << std::endl;
-            continue; // Chờ kết nối tiếp theo
-        }
-        
-        std::cout << "New client connected. Waiting for login..." << std::endl;
-
-        // Xử lý đăng nhập
-        // (LƯU Ý: Thiết kế này chỉ xử lý 1 client tại 1 thời điểm)
-        // (Để xử lý nhiều client, bạn cần dùng thread hoặc fork)
-        login(clientSock, dbManager);
-
-        // Sau khi client xử lý xong (ngắt kết nối), đóng socket
-        close(clientSock);
-        std::cout << "Client session ended." << std::endl;
+ 
+// DELETE_QUIZ|quizId
+void handleDeleteQuiz(const vector<string> &parts, int sock, DbManager *db) {
+    if (parts.size() != 2) {
+        sendLine(sock, "DELETE_QUIZ_FAIL|reason=bad_format");
+        return;
     }
-
-    // Đóng server
+ 
+    int quizId;
+    try {
+        quizId = stoi(parts[1]);
+    } catch (...) {
+        sendLine(sock, "DELETE_QUIZ_FAIL|reason=bad_number");
+        return;
+    }
+ 
+    try {
+        // Xoá theo thứ tự tránh lỗi FK
+        // 1) đáp án của các câu hỏi thuộc quiz
+        string q1 =
+            "DELETE FROM Answers WHERE question_id IN "
+            "(SELECT question_id FROM Questions WHERE quiz_id=" +
+            to_string(quizId) + ");";
+        db->executeUpdate(q1);
+ 
+        // 2) exam_answers của các exam thuộc quiz
+        string q2 =
+            "DELETE FROM Exam_Answers WHERE exam_id IN "
+            "(SELECT exam_id FROM Exams WHERE quiz_id=" +
+            to_string(quizId) + ");";
+        db->executeUpdate(q2);
+ 
+        // 3) exams thuộc quiz
+        string q3 =
+            "DELETE FROM Exams WHERE quiz_id=" +
+            to_string(quizId) + ";";
+        db->executeUpdate(q3);
+ 
+        // 4) questions
+        string q4 =
+            "DELETE FROM Questions WHERE quiz_id=" +
+            to_string(quizId) + ";";
+        db->executeUpdate(q4);
+ 
+        // 5) quiz
+        string q5 =
+            "DELETE FROM Quizzes WHERE quiz_id=" +
+            to_string(quizId) + ";";
+        db->executeUpdate(q5);
+ 
+        sendLine(sock, "DELETE_QUIZ_OK");
+    } catch (sql::SQLException &e) {
+        cerr << "[DELETE_QUIZ] SQL error: " << e.what() << endl;
+        sendLine(sock, "DELETE_QUIZ_FAIL|reason=sql_error");
+    }
+}
+ 
+// ==================================================
+// QUESTIONS
+// ==================================================
+ 
+// LIST_QUESTIONS|quizId
+void handleListQuestions(const vector<string> &parts, int sock, DbManager *db) {
+    if (parts.size() != 2) {
+        sendLine(sock, "LIST_QUESTIONS_FAIL|reason=bad_format");
+        return;
+    }
+    int quizId;
+    try {
+        quizId = stoi(parts[1]);
+    } catch (...) {
+        sendLine(sock, "LIST_QUESTIONS_FAIL|reason=bad_number");
+        return;
+    }
+ 
+    string q =
+        "SELECT question_id, question_text "
+        "FROM Questions WHERE quiz_id=" + to_string(quizId) + ";";
+ 
+    try {
+        sql::ResultSet *res = db->executeQuery(q);
+        if (!res) {
+            sendLine(sock, "LIST_QUESTIONS_FAIL|reason=db_error");
+            return;
+        }
+ 
+        stringstream ss;
+        ss << "QUESTIONS|" << quizId << "|";
+        bool first = true;
+        while (res->next()) {
+            if (!first) ss << ";";
+            first = false;
+            int qid = res->getInt("question_id");
+            string text = res->getString("question_text");
+            ss << qid << ":" << text;
+        }
+        delete res;
+        sendLine(sock, ss.str());
+    } catch (sql::SQLException &e) {
+        cerr << "[LIST_QUESTIONS] SQL error: " << e.what() << endl;
+        sendLine(sock, "LIST_QUESTIONS_FAIL|reason=sql_error");
+    }
+}
+ 
+// ADD_QUESTION|quizId|content|opt1|opt2|opt3|opt4|correctIndex
+void handleAddQuestion(const vector<string> &parts, int sock, DbManager *db) {
+    if (parts.size() != 8) {
+        sendLine(sock, "ADD_QUESTION_FAIL|reason=bad_format");
+        return;
+    }
+ 
+    int quizId, correct;
+    try {
+        quizId  = stoi(parts[1]);
+        correct = stoi(parts[7]); // 1..4
+    } catch (...) {
+        sendLine(sock, "ADD_QUESTION_FAIL|reason=bad_number");
+        return;
+    }
+ 
+    string content = escapeSql(parts[2]);
+    string o1 = escapeSql(parts[3]);
+    string o2 = escapeSql(parts[4]);
+    string o3 = escapeSql(parts[5]);
+    string o4 = escapeSql(parts[6]);
+ 
+    try {
+        // 1) Questions
+        string qInsert =
+            "INSERT INTO Questions (quiz_id, question_text, difficulty, topic) "
+            "VALUES (" + to_string(quizId) + ", '" + content +
+            "', 'easy', 'general');";
+ 
+        int questionId = db->executeInsertAndGetId(qInsert);
+        if (questionId == 0) {
+            sendLine(sock, "ADD_QUESTION_FAIL|reason=sql_error");
+            return;
+        }
+ 
+        // 2) Answers
+        auto insertAns = [&](const string &txt, int index) {
+            string a =
+                "INSERT INTO Answers (question_id, answer_text, is_correct) "
+                "VALUES (" + to_string(questionId) + ", '" +
+                escapeSql(txt) + "', " + (index == correct ? "1" : "0") + ");";
+            db->executeUpdate(a);
+        };
+ 
+        insertAns(o1, 1);
+        insertAns(o2, 2);
+        insertAns(o3, 3);
+        insertAns(o4, 4);
+ 
+        sendLine(sock, "ADD_QUESTION_OK");
+        cout << "[ADD_QUESTION] question added for quiz " << quizId
+             << ", qid=" << questionId << endl;
+ 
+    } catch (sql::SQLException &e) {
+        cerr << "[ADD_QUESTION] SQL error: " << e.what() << endl;
+        sendLine(sock, "ADD_QUESTION_FAIL|reason=sql_error");
+    }
+}
+ 
+// EDIT_QUESTION|qId|content|opt1|opt2|opt3|opt4|correctIndex
+void handleEditQuestion(const vector<string> &parts, int sock, DbManager *db) {
+    if (parts.size() != 8) {
+        sendLine(sock, "EDIT_QUESTION_FAIL|reason=bad_format");
+        return;
+    }
+ 
+    int qid, correct;
+    try {
+        qid     = stoi(parts[1]);
+        correct = stoi(parts[7]);
+    } catch (...) {
+        sendLine(sock, "EDIT_QUESTION_FAIL|reason=bad_number");
+        return;
+    }
+ 
+    string content = escapeSql(parts[2]);
+    string o1 = escapeSql(parts[3]);
+    string o2 = escapeSql(parts[4]);
+    string o3 = escapeSql(parts[5]);
+    string o4 = escapeSql(parts[6]);
+ 
+    try {
+        // update question text
+        string q =
+            "UPDATE Questions SET question_text='" + content +
+            "' WHERE question_id=" + to_string(qid) + ";";
+        db->executeUpdate(q);
+ 
+        // xoá toàn bộ answers cũ
+        string d =
+            "DELETE FROM Answers WHERE question_id=" +
+            to_string(qid) + ";";
+        db->executeUpdate(d);
+ 
+        // insert lại 4 đáp án
+        auto insertAns = [&](const string &txt, int index) {
+            string a =
+                "INSERT INTO Answers (question_id, answer_text, is_correct) "
+                "VALUES (" + to_string(qid) + ", '" +
+                escapeSql(txt) + "', " + (index == correct ? "1" : "0") + ");";
+            db->executeUpdate(a);
+        };
+ 
+        insertAns(o1, 1);
+        insertAns(o2, 2);
+        insertAns(o3, 3);
+        insertAns(o4, 4);
+ 
+        sendLine(sock, "EDIT_QUESTION_OK");
+    } catch (sql::SQLException &e) {
+        cerr << "[EDIT_QUESTION] SQL error: " << e.what() << endl;
+        sendLine(sock, "EDIT_QUESTION_FAIL|reason=sql_error");
+    }
+}
+ 
+// DELETE_QUESTION|qId
+void handleDeleteQuestion(const vector<string> &parts, int sock, DbManager *db) {
+    if (parts.size() != 2) {
+        sendLine(sock, "DELETE_QUESTION_FAIL|reason=bad_format");
+        return;
+    }
+    int qid;
+    try {
+        qid = stoi(parts[1]);
+    } catch (...) {
+        sendLine(sock, "DELETE_QUESTION_FAIL|reason=bad_number");
+        return;
+    }
+ 
+    try {
+        string dAns =
+            "DELETE FROM Answers WHERE question_id=" +
+            to_string(qid) + ";";
+        db->executeUpdate(dAns);
+ 
+        string dQ =
+            "DELETE FROM Questions WHERE question_id=" +
+            to_string(qid) + ";";
+        db->executeUpdate(dQ);
+ 
+        sendLine(sock, "DELETE_QUESTION_OK");
+    } catch (sql::SQLException &e) {
+        cerr << "[DELETE_QUESTION] SQL error: " << e.what() << endl;
+        sendLine(sock, "DELETE_QUESTION_FAIL|reason=sql_error");
+    }
+}
+ 
+// ==================================================
+// EXAMS
+// ==================================================
+ 
+// LIST_EXAMS
+void handleListExams(int sock, DbManager *db) {
+    string q =
+        "SELECT exam_id, quiz_id, user_id, score, status "
+        "FROM Exams;";
+ 
+    try {
+        sql::ResultSet *res = db->executeQuery(q);
+        if (!res) {
+            sendLine(sock, "LIST_EXAMS_FAIL|reason=db_error");
+            return;
+        }
+ 
+        stringstream ss;
+        ss << "EXAMS|";
+        bool first = true;
+        while (res->next()) {
+            if (!first) ss << ";";
+            first = false;
+            int eid = res->getInt("exam_id");
+            int qid = res->getInt("quiz_id");
+            int uid = res->getInt("user_id");
+            double score = res->getDouble("score");
+            string status = res->getString("status");
+            ss << eid << "(quiz=" << qid
+               << ",user=" << uid
+               << ",score=" << score
+               << ",status=" << status << ")";
+        }
+        delete res;
+        sendLine(sock, ss.str());
+    } catch (sql::SQLException &e) {
+        cerr << "[LIST_EXAMS] SQL error: " << e.what() << endl;
+        sendLine(sock, "LIST_EXAMS_FAIL|reason=sql_error");
+    }
+}
+ 
+// ==================================================
+// MAIN
+// ==================================================
+ 
+int main() {
+    DbManager *db = new DbManager("127.0.0.1", "root", "123456", "quizDB");
+    cout << "[DB] Connected to quizDB\n";
+ 
+    int serverSock = socket(AF_INET, SOCK_STREAM, 0);
+    if (serverSock < 0) {
+        cerr << "[NET] Error creating socket\n";
+        return 1;
+    }
+ 
+    sockaddr_in addr{};
+    addr.sin_family      = AF_INET;
+    addr.sin_port        = htons(9000);
+    addr.sin_addr.s_addr = INADDR_ANY;
+ 
+    if (bind(serverSock, (sockaddr*)&addr, sizeof(addr)) < 0) {
+        cerr << "[NET] Bind failed\n";
+        return 1;
+    }
+ 
+    if (listen(serverSock, 5) < 0) {
+        cerr << "[NET] Listen failed\n";
+        return 1;
+    }
+ 
+    cout << "[NET] Server is listening on port 9000...\n";
+ 
+    int clientSock = accept(serverSock, nullptr, nullptr);
+    if (clientSock < 0) {
+        cerr << "[NET] Accept failed\n";
+        return 1;
+    }
+ 
+    string role;
+    if (!handleLogin(clientSock, db, role)) {
+        cerr << "[MAIN] login failed, closing\n";
+        close(clientSock);
+        close(serverSock);
+        delete db;
+        return 0;
+    }
+ 
+    // Vòng lặp command
+    while (true) {
+        string line = recvLine(clientSock);
+        if (line.empty()) {
+            cout << "[MAIN] client disconnected\n";
+            break;
+        }
+ 
+        auto parts = split(line, '|');
+        if (parts.empty()) continue;
+ 
+        string cmd = parts[0];
+ 
+        if (cmd == "LIST_QUIZZES") {
+            handleListQuizzes(clientSock, db);
+ 
+        } else if (cmd == "ADD_QUIZ") {
+            if (role == "teacher")
+                handleAddQuiz(parts, clientSock, db);
+            else
+                sendLine(clientSock, "ADD_QUIZ_FAIL|reason=permission_denied");
+ 
+        } else if (cmd == "EDIT_QUIZ") {
+            if (role == "teacher")
+                handleEditQuiz(parts, clientSock, db);
+            else
+                sendLine(clientSock, "EDIT_QUIZ_FAIL|reason=permission_denied");
+ 
+        } else if (cmd == "DELETE_QUIZ") {
+            if (role == "teacher")
+                handleDeleteQuiz(parts, clientSock, db);
+            else
+                sendLine(clientSock, "DELETE_QUIZ_FAIL|reason=permission_denied");
+ 
+        } else if (cmd == "LIST_QUESTIONS") {
+            handleListQuestions(parts, clientSock, db);
+ 
+        } else if (cmd == "ADD_QUESTION") {
+            if (role == "teacher")
+                handleAddQuestion(parts, clientSock, db);
+            else
+                sendLine(clientSock, "ADD_QUESTION_FAIL|reason=permission_denied");
+ 
+        } else if (cmd == "EDIT_QUESTION") {
+            if (role == "teacher")
+                handleEditQuestion(parts, clientSock, db);
+            else
+                sendLine(clientSock, "EDIT_QUESTION_FAIL|reason=permission_denied");
+ 
+        } else if (cmd == "DELETE_QUESTION") {
+            if (role == "teacher")
+                handleDeleteQuestion(parts, clientSock, db);
+            else
+                sendLine(clientSock, "DELETE_QUESTION_FAIL|reason=permission_denied");
+ 
+        } else if (cmd == "LIST_EXAMS") {
+            handleListExams(clientSock, db);
+ 
+        } else if (cmd == "QUIT") {
+            sendLine(clientSock, "BYE");
+            break;
+ 
+        } else {
+            sendLine(clientSock, "ERR|reason=unknown_command");
+        }
+    }
+ 
+    close(clientSock);
     close(serverSock);
-    delete dbManager; // Dọn dẹp DbManager khi server sập
+    delete db;
     return 0;
 }
+ 
