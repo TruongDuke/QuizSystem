@@ -1,0 +1,31 @@
+quiz_app/
+│
+├── server/                     # Mã nguồn phía server
+│   ├── src/
+│   │   ├── db_manager.cpp      # Quản lý kết nối DB
+│   │   ├── server.cpp          # Logic chính server
+│   │   ├── quiz_manager.cpp    # Quản lý quiz
+│   │   ├── question_manager.cpp # Quản lý câu hỏi
+│   │   ├── session_manager.cpp  # Quản lý session (file mới)
+│   │   └── protocol_manager.cpp # Quản lý giao thức (file mới)
+│   ├── include/
+│   │   ├── db_manager.h        # Header cho db_manager.cpp
+│   │   ├── server.h            # Header cho server.cpp
+│   │   ├── quiz_manager.h      # Header cho quiz_manager.cpp
+│   │   ├── question_manager.h  # Header cho question_manager.cpp
+│   │   ├── session_manager.h   # Header cho session_manager.cpp
+│   │   └── protocol_manager.h  # Header cho protocol_manager.cpp
+│   └── Makefile                # Cấu hình biên dịch
+│
+├── client/                     # Mã nguồn phía client
+│   ├── src/
+│   │   ├── client.cpp          # Logic chính client
+│   │   ├── quiz_interface.cpp  # Giao diện quiz cho giáo viên
+│   │   └── question_interface.cpp  # Giao diện câu hỏi
+│   ├── include/
+│   │   ├── client.h            # Header cho client.cpp
+│   │   ├── quiz_interface.h    # Header cho quiz_interface.cpp
+│   │   └── question_interface.h  # Header cho question_interface.cpp
+│   └── Makefile                # Cấu hình biên dịch
+│
+└── README.md                   # Tài liệu hướng dẫn và ghi chú
