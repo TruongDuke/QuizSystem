@@ -1,3 +1,9 @@
+
+-- Tạo database quizDB
+CREATE DATABASE IF NOT EXISTS quizDB;
+
+USE quizDB;
+
 -- Tạo bảng Users
 CREATE TABLE IF NOT EXISTS Users (
     user_id INT AUTO_INCREMENT PRIMARY KEY,
