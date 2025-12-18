@@ -17,7 +17,10 @@ SOURCES = $(SRC_DIR)/server.cpp \
           $(SRC_DIR)/protocol_manager.cpp \
           $(SRC_DIR)/session_manager.cpp \
           $(SRC_DIR)/quiz_manager.cpp \
-          $(SRC_DIR)/question_manager.cpp
+          $(SRC_DIR)/question_manager.cpp \
+          $(SRC_DIR)/exam_manager.cpp \
+          $(SRC_DIR)/client_manager.cpp \
+          $(SRC_DIR)/broadcast_manager.cpp
 
 # Object files
 OBJECTS = $(SOURCES:$(SRC_DIR)/%.cpp=$(BUILD_DIR)/%.o)
@@ -26,9 +29,9 @@ OBJECTS = $(SOURCES:$(SRC_DIR)/%.cpp=$(BUILD_DIR)/%.o)
 TARGET = quiz_server
 
 # Compiler flags
-CXXFLAGS = -std=c++11 -Wall -Wextra
+CXXFLAGS = -std=c++11 -Wall -Wextra -pthread
 INCLUDES = -I$(INCLUDE_DIR) -I$(MYSQL_CPP_DIR)/include
-LIBS = -L$(MYSQL_CPP_DIR)/lib -lmysqlcppconn
+LIBS = -L$(MYSQL_CPP_DIR)/lib -lmysqlcppconn -pthread
 
 # Default target
 all: $(BUILD_DIR) $(TARGET)
