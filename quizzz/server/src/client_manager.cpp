@@ -10,6 +10,8 @@ void ClientManager::addClient(int sock) {
     ClientInfo info;
     info.sock = sock;
     info.authenticated = false;
+    info.currentExamId = 0;
+    info.currentQuestionIndex = 0;
     clients[sock] = info;
 }
 
@@ -53,6 +55,10 @@ void ClientManager::setClientInfo(int sock, const std::string& sessionId,
         it->second.username = username;
         it->second.userId = userId;
         it->second.authenticated = true;
+        // Reset exam state
+        it->second.currentExamId = 0;
+        it->second.currentQuestionIndex = 0;
+        it->second.questionIds.clear();
     }
 }
 

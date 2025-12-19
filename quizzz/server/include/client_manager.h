@@ -12,6 +12,10 @@ struct ClientInfo {
     std::string username;
     int userId;
     bool authenticated;
+    // Exam state tracking
+    int currentExamId;        // Exam ID đang làm (0 = không có exam)
+    int currentQuestionIndex; // Index câu hỏi hiện tại (0-based)
+    std::vector<int> questionIds; // Danh sách question IDs của exam
 };
 
 class ClientManager {

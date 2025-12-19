@@ -14,6 +14,13 @@ bool handleLogin(int clientSock, DbManager *db, std::string &outRole, std::strin
 // Exam operations
 void handleListExams(int sock, DbManager *db);
 
+// Student exam handlers
+void handleJoinRoom(const std::vector<std::string>& parts, int sock, 
+                   DbManager* db, ClientManager& clientMgr);
+void handleAnswer(const std::vector<std::string>& parts, int sock,
+                 DbManager* db, ClientManager& clientMgr);
+void handleListMyHistory(int sock, DbManager* db, ClientManager& clientMgr);
+
 // Command handler
 void handleCommand(int clientSock, const std::vector<std::string>& parts, 
                   DbManager* db, ClientManager& clientMgr);

@@ -5,6 +5,8 @@
 #include <cppconn/resultset.h>
 #include <vector>
 #include <iostream>
+#include <algorithm>
+#include <cctype>
 
 // ==================================================
 // EXAM OPERATIONS
@@ -102,6 +104,9 @@ void checkExpiredExams(DbManager* db) {
 // Submit exam manually or automatically
 void submitExam(int examId, DbManager* db) {
     try {
+        // Calculate score before submitting
+        calculateScore(examId, db);
+        
         // Update exam status và end_time
         std::string sql = 
             "UPDATE Exams e "
@@ -116,5 +121,107 @@ void submitExam(int examId, DbManager* db) {
     } catch (sql::SQLException& e) {
         std::cerr << "[SUBMIT_EXAM] SQL error: " << e.what() << std::endl;
     }
+}
+
+// Calculate score for an exam
+void calculateScore(int examId, DbManager* db) {
+    try {
+        // Get all questions for this exam
+        std::string getQuestionsSql = 
+            "SELECT DISTINCT q.question_id "
+            "FROM Questions q "
+            "JOIN Exams e ON q.quiz_id = e.quiz_id "
+            "WHERE e.exam_id = " + std::to_string(examId) + ";";
+        
+        sql::ResultSet* questionsRes = db->executeQuery(getQuestionsSql);
+        if (!questionsRes) {
+            std::cerr << "[CALCULATE_SCORE] Failed to get questions\n";
+            return;
+        }
+        
+        int totalQuestions = 0;
+        int correctAnswers = 0;
+        
+        while (questionsRes->next()) {
+            totalQuestions++;
+            int questionId = questionsRes->getInt("question_id");
+            
+            // Get student's answer
+            std::string getAnswerSql = 
+                "SELECT chosen_answer FROM Exam_Answers "
+                "WHERE exam_id = " + std::to_string(examId) + 
+                " AND question_id = " + std::to_string(questionId) + ";";
+            
+            sql::ResultSet* answerRes = db->executeQuery(getAnswerSql);
+            if (answerRes && answerRes->next()) {
+                std::string chosenAnswer = answerRes->getString("chosen_answer");
+                
+                // Get correct answer
+                std::string getCorrectSql = 
+                    "SELECT answer_text FROM Answers "
+                    "WHERE question_id = " + std::to_string(questionId) + 
+                    " AND is_correct = 1;";
+                
+                sql::ResultSet* correctRes = db->executeQuery(getCorrectSql);
+                if (correctRes && correctRes->next()) {
+                    std::string correctAnswer = correctRes->getString("answer_text");
+                    
+                    // Compare answers (case-insensitive, trim spaces)
+                    std::string chosen = chosenAnswer;
+                    std::string correct = correctAnswer;
+                    // Convert to uppercase for comparison
+                    std::transform(chosen.begin(), chosen.end(), chosen.begin(), ::toupper);
+                    std::transform(correct.begin(), correct.end(), correct.begin(), ::toupper);
+                    
+                    if (chosen == correct) {
+                        correctAnswers++;
+                    }
+                }
+                delete correctRes;
+            }
+            delete answerRes;
+        }
+        delete questionsRes;
+        
+        // Calculate score (0-10 scale)
+        double score = 0.0;
+        if (totalQuestions > 0) {
+            score = (double(correctAnswers) / double(totalQuestions)) * 10.0;
+        }
+        
+        // Update score in database
+        std::string updateScoreSql = 
+            "UPDATE Exams SET score = " + std::to_string(score) + 
+            " WHERE exam_id = " + std::to_string(examId) + ";";
+        
+        db->executeUpdate(updateScoreSql);
+        std::cout << "[CALCULATE_SCORE] Exam " << examId << ": " 
+                  << correctAnswers << "/" << totalQuestions << " correct, score = " << score << std::endl;
+        
+    } catch (sql::SQLException& e) {
+        std::cerr << "[CALCULATE_SCORE] SQL error: " << e.what() << std::endl;
+    }
+}
+
+// Get list of question IDs for a quiz
+std::vector<int> getQuestionsForQuiz(int quizId, DbManager* db) {
+    std::vector<int> questionIds;
+    try {
+        std::string sql = 
+            "SELECT question_id FROM Questions "
+            "WHERE quiz_id = " + std::to_string(quizId) + 
+            " ORDER BY question_id;";
+        
+        sql::ResultSet* res = db->executeQuery(sql);
+        if (res) {
+            while (res->next()) {
+                questionIds.push_back(res->getInt("question_id"));
+            }
+        }
+        delete res;
+    } catch (sql::SQLException& e) {
+        std::cerr << "[GET_QUESTIONS_FOR_QUIZ] SQL error: " << e.what() << std::endl;
+    }
+    return questionIds;
 }
 
