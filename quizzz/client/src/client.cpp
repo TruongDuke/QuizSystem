@@ -1,5 +1,6 @@
 #include "../include/client.h"
 #include "../include/quiz_interface.h"
+#include "../include/question_interface.h"
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -107,7 +108,7 @@ int main() {
     if (role == "teacher") {
         teacherMenu(sock);
     } else if (role == "student") {
-        std::cout << "Student menu not implemented yet.\n";
+        studentMenu(sock);
     }
 
     close(sock);

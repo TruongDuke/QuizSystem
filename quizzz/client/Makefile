@@ -10,7 +10,8 @@ BUILD_DIR = build
 
 # Source files
 SOURCES = $(SRC_DIR)/client.cpp \
-          $(SRC_DIR)/quiz_interface.cpp
+          $(SRC_DIR)/quiz_interface.cpp \
+          $(SRC_DIR)/question_interface.cpp
 
 # Object files
 OBJECTS = $(SOURCES:$(SRC_DIR)/%.cpp=$(BUILD_DIR)/%.o)
