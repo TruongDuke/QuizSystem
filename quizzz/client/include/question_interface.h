@@ -1,6 +1,8 @@
 #ifndef QUESTION_INTERFACE_H
 #define QUESTION_INTERFACE_H
 
+#include <string>
+
 // Student menu
 void studentMenu(int sock);
 
