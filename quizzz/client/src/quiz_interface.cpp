@@ -130,12 +130,31 @@ void teacherMenu(int sock) {
             std::cout << "Enter question count: ";
             std::cin >> count;
 
-            std::cout << "Enter time limit: ";
+            std::cout << "Enter time limit (seconds): ";
             std::cin >> timeLimit;
 
-            std::string msg =
-                "ADD_QUIZ|" + title + "|" + desc + "|" +
-                std::to_string(count) + "|" + std::to_string(timeLimit);
+            std::cout << "Exam type (1=Normal, 2=Scheduled): ";
+            int typeChoice;
+            std::cin >> typeChoice;
+
+            std::string msg;
+            if (typeChoice == 2) {
+                // Scheduled exam
+                std::string startTime, endTime;
+                std::cin.ignore();
+                std::cout << "Enter start time (YYYY-MM-DD HH:MM:SS): ";
+                getline(std::cin, startTime);
+                std::cout << "Enter end time (YYYY-MM-DD HH:MM:SS): ";
+                getline(std::cin, endTime);
+                
+                msg = "ADD_QUIZ|" + title + "|" + desc + "|" +
+                      std::to_string(count) + "|" + std::to_string(timeLimit) + "|" +
+                      "scheduled|" + startTime + "|" + endTime;
+            } else {
+                // Normal exam
+                msg = "ADD_QUIZ|" + title + "|" + desc + "|" +
+                      std::to_string(count) + "|" + std::to_string(timeLimit) + "|normal";
+            }
 
             sendLine(sock, msg);
             std::cout << "Server: " << recvLine(sock) << std::endl;

@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS Users (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- Tạo bảng Quizzes
+-- Tạo bảng Quizzes (với scheduled exam support)
 CREATE TABLE IF NOT EXISTS Quizzes (
     quiz_id INT AUTO_INCREMENT PRIMARY KEY,
     title VARCHAR(255) NOT NULL,
@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS Quizzes (
     time_limit INT,
     creator_id INT,
     status ENUM('not_started', 'in_progress', 'finished') NOT NULL,
+    exam_type ENUM('normal', 'scheduled') DEFAULT 'normal',
+    exam_start_time DATETIME NULL,
+    exam_end_time DATETIME NULL,
     FOREIGN KEY (creator_id) REFERENCES Users(user_id)
 );
 
@@ -86,9 +89,9 @@ INSERT INTO Users (username, password, email, role) VALUES
 ('student1', 'student_password', 'student1@example.com', 'student');
 
 -- Dữ liệu mẫu cho bảng Quizzes
-INSERT INTO Quizzes (title, description, question_count, time_limit, creator_id, status) VALUES
-('Câu hỏi về C++', 'Đề thi trắc nghiệm về C++', 10, 600, 1, 'not_started'),
-('Đề thi Toán học', 'Đề thi về toán cơ bản', 5, 300, 2, 'not_started');
+INSERT INTO Quizzes (title, description, question_count, time_limit, creator_id, status, exam_type, exam_start_time, exam_end_time) VALUES
+('Câu hỏi về C++', 'Đề thi trắc nghiệm về C++', 10, 600, 1, 'not_started', 'normal', NULL, NULL),
+('Đề thi Toán học', 'Đề thi về toán cơ bản', 5, 300, 2, 'not_started', 'scheduled', '2025-01-20 09:00:00', '2025-01-20 12:00:00');
 
 -- Dữ liệu mẫu cho bảng Questions
 INSERT INTO Questions (quiz_id, question_text, difficulty, topic) VALUES

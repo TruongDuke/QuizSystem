@@ -74,28 +74,54 @@ int getRemainingTime(int examId, DbManager* db) {
 // Check and auto-submit expired exams
 void checkExpiredExams(DbManager* db) {
     try {
-        // Tìm các exam đã hết thời gian
-        std::string findSql = 
+        // 1. Tìm các exam đã hết thời gian làm bài (time_limit)
+        std::string findExpiredSql = 
             "SELECT e.exam_id, e.user_id, e.quiz_id "
             "FROM Exams e "
             "JOIN Quizzes q ON e.quiz_id = q.quiz_id "
             "WHERE e.status = 'in_progress' "
             "  AND NOW() >= DATE_ADD(e.start_time, INTERVAL q.time_limit SECOND);";
         
-        sql::ResultSet* res = db->executeQuery(findSql);
-        if (!res) return;
-        
-        std::vector<int> expiredExamIds;
-        while (res->next()) {
-            expiredExamIds.push_back(res->getInt("exam_id"));
+        sql::ResultSet* res = db->executeQuery(findExpiredSql);
+        if (res) {
+            std::vector<int> expiredExamIds;
+            while (res->next()) {
+                expiredExamIds.push_back(res->getInt("exam_id"));
+            }
+            delete res;
+            
+            // Auto-submit các exam đã hết thời gian làm bài
+            for (int examId : expiredExamIds) {
+                submitExam(examId, db);
+                std::cout << "[TIMER] Auto-submitted expired exam (time_limit): " << examId << std::endl;
+            }
         }
-        delete res;
         
-        // Auto-submit các exam đã hết thời gian
-        for (int examId : expiredExamIds) {
-            submitExam(examId, db);
-            std::cout << "[TIMER] Auto-submitted expired exam: " << examId << std::endl;
+        // 2. Tìm các scheduled exam đã vượt quá exam_end_time
+        std::string findScheduledExpiredSql = 
+            "SELECT e.exam_id, e.user_id, e.quiz_id "
+            "FROM Exams e "
+            "JOIN Quizzes q ON e.quiz_id = q.quiz_id "
+            "WHERE e.status = 'in_progress' "
+            "  AND q.exam_type = 'scheduled' "
+            "  AND q.exam_end_time IS NOT NULL "
+            "  AND NOW() > q.exam_end_time;";
+        
+        sql::ResultSet* scheduledRes = db->executeQuery(findScheduledExpiredSql);
+        if (scheduledRes) {
+            std::vector<int> scheduledExpiredIds;
+            while (scheduledRes->next()) {
+                scheduledExpiredIds.push_back(scheduledRes->getInt("exam_id"));
+            }
+            delete scheduledRes;
+            
+            // Auto-submit các scheduled exam đã vượt quá exam_end_time
+            for (int examId : scheduledExpiredIds) {
+                submitExam(examId, db);
+                std::cout << "[TIMER] Auto-submitted scheduled exam (past exam_end_time): " << examId << std::endl;
+            }
         }
+        
     } catch (sql::SQLException& e) {
         std::cerr << "[CHECK_EXPIRED_EXAMS] SQL error: " << e.what() << std::endl;
     }

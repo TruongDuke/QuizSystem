@@ -164,7 +164,9 @@ void handleJoinRoom(const std::vector<std::string>& parts, int sock,
     try {
         // Check if quiz exists and has questions
         std::string checkQuizSql = 
-            "SELECT q.quiz_id, q.time_limit, COUNT(qu.question_id) as question_count "
+            "SELECT q.quiz_id, q.time_limit, q.exam_type, "
+            "       q.exam_start_time, q.exam_end_time, "
+            "       COUNT(qu.question_id) as question_count "
             "FROM Quizzes q "
             "LEFT JOIN Questions qu ON q.quiz_id = qu.quiz_id "
             "WHERE q.quiz_id = " + std::to_string(quizId) + 
@@ -179,11 +181,45 @@ void handleJoinRoom(const std::vector<std::string>& parts, int sock,
         
         int questionCount = checkRes->getInt("question_count");
         int timeLimit = checkRes->getInt("time_limit");
+        std::string examType = checkRes->getString("exam_type");
         delete checkRes;
         
         if (questionCount == 0) {
             sendLine(sock, "JOIN_FAIL|reason=quiz_has_no_questions");
             return;
+        }
+        
+        // Check scheduled exam time window
+        if (examType == "scheduled") {
+            std::string timeCheckSql = 
+                "SELECT q.exam_start_time, q.exam_end_time, "
+                "       NOW() as current_time, "
+                "       (NOW() >= q.exam_start_time AND NOW() <= q.exam_end_time) as in_time_window "
+                "FROM Quizzes q "
+                "WHERE q.quiz_id = " + std::to_string(quizId) + ";";
+            
+            sql::ResultSet* timeRes = db->executeQuery(timeCheckSql);
+            if (timeRes && timeRes->next()) {
+                bool inTimeWindow = timeRes->getInt("in_time_window") == 1;
+                std::string startTime = timeRes->getString("exam_start_time");
+                std::string endTime = timeRes->getString("exam_end_time");
+                std::string currentTime = timeRes->getString("current_time");
+                delete timeRes;
+                
+                if (!inTimeWindow) {
+                    std::stringstream ss;
+                    ss << "JOIN_FAIL|reason=exam_not_available|"
+                       << "start_time=" << startTime << "|"
+                       << "end_time=" << endTime << "|"
+                       << "current_time=" << currentTime;
+                    sendLine(sock, ss.str());
+                    return;
+                }
+            } else {
+                delete timeRes;
+                sendLine(sock, "JOIN_FAIL|reason=time_check_failed");
+                return;
+            }
         }
         
         // Start exam

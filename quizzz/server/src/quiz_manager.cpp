@@ -49,9 +49,11 @@ void handleListQuizzes(int sock, DbManager *db) {
     }
 }
 
-// ADD_QUIZ|title|desc|count|time
+// ADD_QUIZ|title|desc|count|time|type|start_time|end_time
+// Format: ADD_QUIZ|title|desc|count|time (normal exam)
+//         ADD_QUIZ|title|desc|count|time|scheduled|start_time|end_time (scheduled exam)
 void handleAddQuiz(const std::vector<std::string> &parts, int sock, DbManager *db) {
-    if (parts.size() != 5) {
+    if (parts.size() < 5) {
         sendLine(sock, "ADD_QUIZ_FAIL|reason=bad_format");
         return;
     }
@@ -67,13 +69,32 @@ void handleAddQuiz(const std::vector<std::string> &parts, int sock, DbManager *d
         sendLine(sock, "ADD_QUIZ_FAIL|reason=bad_number");
         return;
     }
+    
+    // Parse exam type (default: normal)
+    std::string examType = "normal";
+    std::string examStartTime = "NULL";
+    std::string examEndTime = "NULL";
+    
+    if (parts.size() >= 6) {
+        examType = parts[5]; // "normal" hoặc "scheduled"
+        
+        if (examType == "scheduled") {
+            if (parts.size() < 8) {
+                sendLine(sock, "ADD_QUIZ_FAIL|reason=missing_scheduled_time");
+                return;
+            }
+            examStartTime = "'" + escapeSql(parts[6]) + "'"; // "2025-01-20 09:00:00"
+            examEndTime = "'" + escapeSql(parts[7]) + "'";   // "2025-01-20 12:00:00"
+        }
+    }
 
     std::string insertSql =
         "INSERT INTO Quizzes (title, description, question_count, time_limit, "
-        "status, creator_id) VALUES ('" +
+        "status, creator_id, exam_type, exam_start_time, exam_end_time) VALUES ('" +
         title + "', '" + desc + "', " +
         std::to_string(count) + ", " + std::to_string(timeLimit) +
-        ", 'not_started', 2);";
+        ", 'not_started', 2, '" + examType + "', " +
+        examStartTime + ", " + examEndTime + ");";
 
     std::cout << "[ADD_QUIZ] SQL: " << insertSql << std::endl;
     int newId = db->executeInsertAndGetId(insertSql);
@@ -83,7 +104,7 @@ void handleAddQuiz(const std::vector<std::string> &parts, int sock, DbManager *d
     }
 
     sendLine(sock, "ADD_QUIZ_OK|quizId=" + std::to_string(newId));
-    std::cout << "[ADD_QUIZ] quiz added, id=" << newId << std::endl;
+    std::cout << "[ADD_QUIZ] quiz added, id=" << newId << ", type=" << examType << std::endl;
 }
 
 // EDIT_QUIZ|quizId|title|desc|count|time
