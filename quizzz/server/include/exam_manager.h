@@ -2,6 +2,7 @@
 #define EXAM_MANAGER_H
 
 #include <string>
+#include <vector>
 
 class DbManager;
 
