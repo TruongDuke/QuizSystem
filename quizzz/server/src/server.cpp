@@ -336,10 +336,14 @@ void handleAnswer(const std::vector<std::string>& parts, int sock,
         // Move to next question
         clientInfo->currentQuestionIndex++;
         
+        std::cout << "[ANSWER] Question answered. Current index: " << clientInfo->currentQuestionIndex 
+                  << ", Total questions: " << clientInfo->questionIds.size() << std::endl;
+        
         // Check if there are more questions
         if (clientInfo->currentQuestionIndex < clientInfo->questionIds.size()) {
             // Send next question
             int nextQuestionId = clientInfo->questionIds[clientInfo->currentQuestionIndex];
+            std::cout << "[ANSWER] Sending next question " << nextQuestionId << " to client " << sock << std::endl;
             sendQuestion(sock, nextQuestionId, db);
         } else {
             // All questions answered, submit exam and send results

@@ -12,7 +12,13 @@ void enterExamRoom(int sock, const std::string& roomId) {
     
     while (true) {
         std::string msg = recvLine(sock);
-        if (msg.empty()) return;
+        if (msg.empty()) {
+            std::cout << "[DEBUG] Received empty message, connection closed?\n";
+            return;
+        }
+
+        // Debug: show received message (can be removed later)
+        // std::cout << "[DEBUG] Received: " << msg << std::endl;
 
         auto parts = split(msg, '|');
         if (parts.empty()) continue;
@@ -40,6 +46,8 @@ void enterExamRoom(int sock, const std::string& roomId) {
             std::string ans;
             std::cout << "Your answer (A/B/C/D): ";
             std::cin >> ans;
+            // Clear any remaining input buffer
+            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
             
             // Validate answer input
             while (ans != "A" && ans != "a" && ans != "B" && ans != "b" && 
@@ -55,7 +63,15 @@ void enterExamRoom(int sock, const std::string& roomId) {
             else if (ans == "d") ans = "D";
             
             sendLine(sock, "ANSWER|" + parts[1] + "|" + ans);
-            continue; // Important: skip the else if below
+            // Continue to wait for next message (QUESTION, END_EXAM, or ANSWER_FAIL)
+            continue;
+
+        } else if (cmd == "ANSWER_FAIL") {
+            std::string reason = parts.size() > 1 ? parts[1] : "unknown_error";
+            std::cout << "\n[ERROR] Failed to submit answer: " << reason << std::endl;
+            std::cout << "Please try again or contact administrator.\n";
+            // Continue to wait for next message
+            continue;
 
         } else if (cmd == "END_EXAM") {
             std::cout << "\n===================================\n";
@@ -73,6 +89,9 @@ void enterExamRoom(int sock, const std::string& roomId) {
             break;
         } else if (!examStarted) {
             // Before exam starts, show server messages
+            std::cout << "Server: " << msg << std::endl;
+        } else {
+            // During exam, show any other server messages (for debugging)
             std::cout << "Server: " << msg << std::endl;
         }
     }
