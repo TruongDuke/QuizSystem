@@ -8,6 +8,8 @@ void enterExamRoom(int sock, const std::string& roomId) {
     std::cout << "\n[ROOM " << roomId << "] Joined successfully.\n";
     std::cout << "Waiting for exam to start...\n";
 
+    bool examStarted = false;
+    
     while (true) {
         std::string msg = recvLine(sock);
         if (msg.empty()) return;
@@ -15,26 +17,19 @@ void enterExamRoom(int sock, const std::string& roomId) {
         auto parts = split(msg, '|');
         if (parts.empty()) continue;
 
-        if (parts[0] == "TEST_STARTED") {
-            std::cout << "\n>>> EXAM STARTED! <<<\n";
-            if (parts.size() > 1) std::cout << "Time limit: " << parts[1] << " minutes.\n";
-            break;
-        } else {
-            std::cout << "Server: " << msg << std::endl;
-        }
-    }
-
-    while (true) {
-        std::string msg = recvLine(sock);
-        if (msg.empty()) break;
-
-        auto parts = split(msg, '|');
-        if (parts.empty()) continue;
-
         std::string cmd = parts[0];
 
-        if (cmd == "QUESTION") {
-            if (parts.size() < 7) continue;
+        if (cmd == "TEST_STARTED") {
+            std::cout << "\n>>> EXAM STARTED! <<<\n";
+            if (parts.size() > 1) std::cout << "Time limit: " << parts[1] << " minutes.\n";
+            examStarted = true;
+            // Continue to process next message (first question)
+            continue;
+        } else if (cmd == "QUESTION") {
+            if (parts.size() < 7) {
+                // Invalid question format, skip
+                continue;
+            }
             std::cout << "\n-----------------------------------\n";
             std::cout << "Question: " << parts[2] << std::endl;
             std::cout << "A. " << parts[3] << std::endl;
@@ -45,7 +40,22 @@ void enterExamRoom(int sock, const std::string& roomId) {
             std::string ans;
             std::cout << "Your answer (A/B/C/D): ";
             std::cin >> ans;
+            
+            // Validate answer input
+            while (ans != "A" && ans != "a" && ans != "B" && ans != "b" && 
+                   ans != "C" && ans != "c" && ans != "D" && ans != "d") {
+                std::cout << "Invalid choice! Please enter A, B, C, or D: ";
+                std::cin >> ans;
+            }
+            
+            // Convert to uppercase
+            if (ans == "a") ans = "A";
+            else if (ans == "b") ans = "B";
+            else if (ans == "c") ans = "C";
+            else if (ans == "d") ans = "D";
+            
             sendLine(sock, "ANSWER|" + parts[1] + "|" + ans);
+            continue; // Important: skip the else if below
 
         } else if (cmd == "END_EXAM") {
             std::cout << "\n===================================\n";
@@ -54,10 +64,16 @@ void enterExamRoom(int sock, const std::string& roomId) {
             if (parts.size() >= 2) {
                 std::cout << "\nYour Score: " << parts[1] << std::endl;
             }
+            if (parts.size() >= 3) {
+                std::cout << "Correct Answers: " << parts[2] << std::endl;
+            }
             std::cout << "\nPress Enter to return to menu...";
             std::cin.ignore();
             std::cin.get();
             break;
+        } else if (!examStarted) {
+            // Before exam starts, show server messages
+            std::cout << "Server: " << msg << std::endl;
         }
     }
 }

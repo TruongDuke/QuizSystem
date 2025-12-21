@@ -115,7 +115,9 @@ void sendQuestion(int sock, int questionId, DbManager* db) {
         
         std::vector<std::string> answers;
         while (aRes->next() && answers.size() < 4) {
-            answers.push_back(aRes->getString("answer_text"));
+            // IMPORTANT: Create a copy of the string immediately to avoid reference issues
+            std::string answerText = aRes->getString("answer_text");
+            answers.push_back(answerText);
         }
         delete aRes;
         
@@ -193,7 +195,7 @@ void handleJoinRoom(const std::vector<std::string>& parts, int sock,
         if (examType == "scheduled") {
             std::string timeCheckSql = 
                 "SELECT q.exam_start_time, q.exam_end_time, "
-                "       NOW() as current_time, "
+                "       NOW() as `current_time`, "
                 "       (NOW() >= q.exam_start_time AND NOW() <= q.exam_end_time) as in_time_window "
                 "FROM Quizzes q "
                 "WHERE q.quiz_id = " + std::to_string(quizId) + ";";

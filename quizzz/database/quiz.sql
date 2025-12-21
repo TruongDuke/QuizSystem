@@ -104,9 +104,15 @@ INSERT INTO Answers (question_id, answer_text, is_correct) VALUES
 (1, '3', 0),
 (1, '4', 1),
 (1, '5', 0),
+(1, '6', 0),
 (2, 'Hướng đối tượng', 1),
 (2, 'Hướng thủ tục', 0),
-(3, 'S = a^2', 1);
+(2, 'Hướng chức năng', 0),
+(2, 'Hướng sự kiện', 0),
+(3, 'S = a^2', 1),
+(3, 'S = a * b', 0),
+(3, 'S = 2a', 0),
+(3, 'S = a + b', 0);
 
 -- Dữ liệu mẫu cho bảng Exams
 INSERT INTO Exams (quiz_id, user_id, start_time, end_time, score, status) VALUES
