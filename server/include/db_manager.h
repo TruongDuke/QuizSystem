@@ -6,6 +6,7 @@
 #include <mysql_connection.h>
 #include <cppconn/prepared_statement.h>
 #include <cppconn/resultset.h>
+#include <mutex>
  
 class DbManager {
 public:
@@ -34,6 +35,12 @@ private:
     std::string dbUser;
     std::string dbPass;
     std::string dbName;
+
+    sql::mysql::MySQL_Driver* driver = nullptr;
+    sql::Connection* conn = nullptr;
+    std::mutex mtx;
+
+    void ensureConnection();
 };
  
 #endif // DB_MANAGER_H

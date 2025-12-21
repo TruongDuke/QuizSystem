@@ -127,7 +127,7 @@ std::string doLogin(int sock) {
 // MAIN
 // ==================================================
 
-int main() {
+int main(int argc, char** argv) {
     std::cout << "\n=== QUIZ SYSTEM ===\n";
     std::cout << "1. Login\n";
     std::cout << "2. Register\n";
@@ -143,13 +143,28 @@ int main() {
         return 1;
     }
 
+    // Server IP & port from CLI args: ./quiz_client <IP> [PORT]
+    std::string ipStr = (argc >= 2 ? std::string(argv[1]) : std::string("127.0.0.1"));
+    int port = 9000;
+    if (argc >= 3) {
+        try {
+            port = std::stoi(argv[2]);
+        } catch (...) {
+            std::cerr << "Invalid port. Usage: ./quiz_client <IP> [PORT]" << std::endl;
+            close(sock);
+            return 1;
+        }
+    }
+
+    std::cout << "Connecting to " << ipStr << ":" << port << "..." << std::endl;
+
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
-    addr.sin_port   = htons(9000);
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    addr.sin_port   = htons(port);
+    addr.sin_addr.s_addr = inet_addr(ipStr.c_str());
 
     if (connect(sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
-        std::cerr << "Connection failed\n";
+        std::cerr << "Connection failed to " << ipStr << ":" << port << "\n";
         return 1;
     }
 
