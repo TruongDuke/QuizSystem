@@ -4,7 +4,7 @@
 CXX = g++
 
 # MySQL Connector/C++ path
-MYSQL_CPP_DIR = /opt/homebrew/opt/mysql-connector-c++
+MYSQL_CPP_DIR = /usr
 
 # Directories
 SRC_DIR = src

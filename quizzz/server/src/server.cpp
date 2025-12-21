@@ -80,6 +80,64 @@ bool handleLogin(int clientSock, DbManager *db, std::string &outRole, std::strin
 }
 
 // ==================================================
+// REGISTER
+// ==================================================
+
+// message client gửi: REGISTER|username|password|email|role
+bool handleRegister(int clientSock, DbManager *db, const std::vector<std::string>& parts) {
+    if (parts.size() != 5 || parts[0] != "REGISTER") {
+        sendLine(clientSock, "REGISTER_FAIL|reason=bad_format");
+        return false;
+    }
+
+    std::string username = escapeSql(parts[1]);
+    std::string password = escapeSql(parts[2]);
+    std::string email = escapeSql(parts[3]);
+    std::string role = escapeSql(parts[4]);
+
+    // Validate role
+    if (role != "teacher" && role != "student" && role != "admin") {
+        sendLine(clientSock, "REGISTER_FAIL|reason=invalid_role");
+        return false;
+    }
+
+    // Check if username already exists
+    std::string checkQ = "SELECT username FROM Users WHERE username = '" + username + "';";
+    sql::ResultSet *checkRes = nullptr;
+    try {
+        checkRes = db->executeQuery(checkQ);
+        if (checkRes && checkRes->next()) {
+            delete checkRes;
+            sendLine(clientSock, "REGISTER_FAIL|reason=username_exists");
+            return false;
+        }
+        delete checkRes;
+    } catch (sql::SQLException &e) {
+        std::cerr << "[REGISTER] SQL error checking username: " << e.what() << std::endl;
+        sendLine(clientSock, "REGISTER_FAIL|reason=sql_error");
+        return false;
+    }
+
+    // Insert new user
+    std::string insertQ = 
+        "INSERT INTO Users (username, password, email, role) VALUES ('" +
+        username + "', '" + password + "', '" + email + "', '" + role + "');";
+
+    std::cout << "[REGISTER] SQL Query: " << insertQ << std::endl;
+
+    try {
+        db->executeUpdate(insertQ);
+        sendLine(clientSock, "REGISTER_OK");
+        std::cout << "[REGISTER] New user registered: " << username << " as " << role << std::endl;
+        return true;
+    } catch (sql::SQLException &e) {
+        std::cerr << "[REGISTER] SQL error inserting user: " << e.what() << std::endl;
+        sendLine(clientSock, "REGISTER_FAIL|reason=sql_error");
+        return false;
+    }
+}
+
+// ==================================================
 // STUDENT EXAM HANDLERS
 // ==================================================
 
@@ -701,22 +759,100 @@ int main() {
             if (FD_ISSET(clientSock, &read_set)) {
                 ClientInfo* info = clientMgr.getClient(clientSock);
                 
-                // Handle login for unauthenticated clients
+                // Handle login/register for unauthenticated clients
                 if (!info || !info->authenticated) {
-                    std::string role, sessionId;
-                    if (handleLogin(clientSock, db, role, sessionId)) {
-                        // Get user info from session
-                        SessionManager& sessionMgr = SessionManager::getInstance();
-                        Session* session = sessionMgr.getSession(sessionId);
-                        if (session) {
-                            clientMgr.setClientInfo(clientSock, sessionId, role, 
-                                                   session->username, session->userId);
-                            std::cout << "[NET] Client " << clientSock 
-                                     << " authenticated as " << role << std::endl;
+                    std::string line = recvLine(clientSock);
+                    if (line.empty()) {
+                        std::cout << "[NET] Client " << clientSock << " disconnected\n";
+                        close(clientSock);
+                        FD_CLR(clientSock, &master_set);
+                        clientMgr.removeClient(clientSock);
+                        continue;
+                    }
+
+                    auto parts = split(line, '|');
+                    if (parts.empty()) {
+                        close(clientSock);
+                        FD_CLR(clientSock, &master_set);
+                        clientMgr.removeClient(clientSock);
+                        continue;
+                    }
+
+                    if (parts[0] == "REGISTER") {
+                        // Handle registration
+                        if (handleRegister(clientSock, db, parts)) {
+                            std::cout << "[NET] Client " << clientSock << " registered successfully\n";
+                        }
+                        // Close connection after register (client must login separately)
+                        close(clientSock);
+                        FD_CLR(clientSock, &master_set);
+                        clientMgr.removeClient(clientSock);
+                        continue;
+                    } else if (parts[0] == "LOGIN") {
+                        // Re-construct the login message for handleLogin
+                        std::string loginMsg = line;
+                        // handleLogin expects to read from socket, so we need to simulate that
+                        // Since we already read the line, we'll pass it differently
+                        
+                        // Parse login info directly
+                        if (parts.size() != 3) {
+                            sendLine(clientSock, "LOGIN_FAIL|reason=bad_format");
+                            close(clientSock);
+                            FD_CLR(clientSock, &master_set);
+                            clientMgr.removeClient(clientSock);
+                            continue;
+                        }
+                        
+                        std::string username = escapeSql(parts[1]);
+                        std::string password = escapeSql(parts[2]);
+                        
+                        std::string q =
+                            "SELECT * FROM Users "
+                            "WHERE username = '" + username +
+                            "' AND password = '" + password + "';";
+                        
+                        sql::ResultSet *res = nullptr;
+                        try {
+                            res = db->executeQuery(q);
+                            if (res && res->next()) {
+                                std::string role = res->getString("role");
+                                int userId = res->getInt("user_id");
+                                
+                                // Create session
+                                SessionManager& sessionMgr = SessionManager::getInstance();
+                                std::string sessionId = sessionMgr.createSession(userId, username, role);
+                                
+                                sendLine(clientSock, "LOGIN_OK|sessionId=" + sessionId + "|role=" + role);
+                                std::cout << "[LOGIN] user " << username << " logged in as " << role << std::endl;
+                                
+                                // Get user info from session
+                                Session* session = sessionMgr.getSession(sessionId);
+                                if (session) {
+                                    clientMgr.setClientInfo(clientSock, sessionId, role, 
+                                                           session->username, session->userId);
+                                    std::cout << "[NET] Client " << clientSock 
+                                             << " authenticated as " << role << std::endl;
+                                }
+                                delete res;
+                            } else {
+                                sendLine(clientSock, "LOGIN_FAIL|reason=wrong_credentials");
+                                delete res;
+                                close(clientSock);
+                                FD_CLR(clientSock, &master_set);
+                                clientMgr.removeClient(clientSock);
+                                continue;
+                            }
+                        } catch (sql::SQLException &e) {
+                            std::cerr << "[LOGIN] SQL error: " << e.what() << std::endl;
+                            sendLine(clientSock, "LOGIN_FAIL|reason=sql_error");
+                            close(clientSock);
+                            FD_CLR(clientSock, &master_set);
+                            clientMgr.removeClient(clientSock);
+                            continue;
                         }
                     } else {
-                        // Login failed, close connection
-                        std::cout << "[NET] Client " << clientSock << " login failed\n";
+                        // Unknown command before authentication
+                        sendLine(clientSock, "ERROR|Please LOGIN or REGISTER first");
                         close(clientSock);
                         FD_CLR(clientSock, &master_set);
                         clientMgr.removeClient(clientSock);

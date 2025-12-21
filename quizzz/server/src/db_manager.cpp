@@ -50,6 +50,7 @@ void DbManager::executeUpdate(const std::string& query) {
         delete con;
     } catch (sql::SQLException& e) {
         std::cerr << "[DB] executeUpdate error: " << e.what() << std::endl;
+        throw; // Re-throw exception để caller xử lý
     }
 }
  

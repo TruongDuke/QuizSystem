@@ -11,6 +11,9 @@ class ClientManager;
 // Login handler
 bool handleLogin(int clientSock, DbManager *db, std::string &outRole, std::string &outSessionId);
 
+// Register handler
+bool handleRegister(int clientSock, DbManager *db, const std::vector<std::string>& parts);
+
 // Exam operations
 void handleListExams(int sock, DbManager *db);
 

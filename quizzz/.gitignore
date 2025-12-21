@@ -1,0 +1,26 @@
+# Build directories
+server/build/
+client/build/
+
+# Executables
+server/quiz_server
+client/quiz_client
+
+# Object files
+*.o
+
+# Vim swap files
+*.swp
+.*.swp
+
+# Backup files
+*.save
+*~
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

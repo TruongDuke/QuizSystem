@@ -41,6 +41,47 @@ std::vector<std::string> split(const std::string &s, char delim) {
 }
 
 // ==================================================
+// Register
+// ==================================================
+
+bool doRegister(int sock) {
+    std::string username, password, email, role;
+
+    std::cout << "\n=== REGISTER NEW ACCOUNT ===\n";
+    std::cout << "Enter username: ";
+    std::cin >> username;
+
+    std::cout << "Enter password: ";
+    std::cin >> password;
+
+    std::cout << "Enter email: ";
+    std::cin >> email;
+
+    std::cout << "Enter role (teacher/student): ";
+    std::cin >> role;
+
+    std::string msg = "REGISTER|" + username + "|" + password + "|" + email + "|" + role;
+    sendLine(sock, msg);
+
+    std::string resp = recvLine(sock);
+    if (resp.empty()) {
+        std::cerr << "No response from server\n";
+        return false;
+    }
+
+    std::cout << "Server: " << resp << std::endl;
+
+    auto parts = split(resp, '|');
+    if (parts.size() > 0 && parts[0] == "REGISTER_OK") {
+        std::cout << "Registration successful! Please login.\n";
+        return true;
+    }
+
+    std::cerr << "Registration failed.\n";
+    return false;
+}
+
+// ==================================================
 // Login
 // ==================================================
 
@@ -87,6 +128,14 @@ std::string doLogin(int sock) {
 // ==================================================
 
 int main() {
+    std::cout << "\n=== QUIZ SYSTEM ===\n";
+    std::cout << "1. Login\n";
+    std::cout << "2. Register\n";
+    std::cout << "Choose option: ";
+    
+    int choice;
+    std::cin >> choice;
+
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         std::cerr << "Socket creation failed\n";
@@ -103,6 +152,16 @@ int main() {
         return 1;
     }
 
+    if (choice == 2) {
+        // Register
+        if (doRegister(sock)) {
+            std::cout << "\nPlease restart the client and login.\n";
+        }
+        close(sock);
+        return 0;
+    }
+
+    // Login (choice == 1 or default)
     std::string role = doLogin(sock);
 
     if (role == "teacher") {
