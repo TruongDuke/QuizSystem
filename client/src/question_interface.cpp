@@ -28,7 +28,20 @@ void enterExamRoom(int sock, const std::string& roomId) {
  
         if (cmd == "TEST_STARTED") {
             std::cout << "\n>>> EXAM STARTED! <<<\n";
-            if (parts.size() > 1) std::cout << "Time limit: " << parts[1] << " minutes.\n";
+            if (parts.size() > 1) {
+                int timeLimitSeconds = std::stoi(parts[1]);
+                int minutes = timeLimitSeconds / 60;
+                int seconds = timeLimitSeconds % 60;
+                std::cout << "Time limit: " << minutes << " minutes";
+                if (seconds > 0) std::cout << " " << seconds << " seconds";
+                std::cout << std::endl;
+            }
+            if (parts.size() > 2) {
+                std::string examType = parts[2];
+                if (examType == "scheduled") {
+                    std::cout << "[Scheduled Exam] Thời gian làm bài có thể bị giới hạn bởi thời gian kết thúc bài thi.\n";
+                }
+            }
             examStarted = true;
             // Continue to process next message (first question)
             continue;
@@ -125,9 +138,35 @@ void studentMenu(int sock) {
             auto parts = split(resp, '|');
  
             if (parts.size() > 0 && parts[0] == "TEST_STARTED") {
+                // Display exam info before entering exam room
+                std::cout << "\n>>> EXAM STARTED! <<<\n";
+                if (parts.size() > 1) {
+                    int timeLimitSeconds = std::stoi(parts[1]);
+                    int minutes = timeLimitSeconds / 60;
+                    int seconds = timeLimitSeconds % 60;
+                    std::cout << "Time limit: " << minutes << " minutes";
+                    if (seconds > 0) std::cout << " " << seconds << " seconds";
+                    std::cout << std::endl;
+                }
+                if (parts.size() > 2) {
+                    std::string examType = parts[2];
+                    if (examType == "scheduled") {
+                        std::cout << "[Scheduled Exam] Thời gian làm bài có thể bị giới hạn bởi thời gian kết thúc bài thi.\n";
+                    }
+                }
                 enterExamRoom(sock, std::to_string(quizId));
             } else if (parts.size() > 0 && parts[0] == "JOIN_FAIL") {
                 std::cout << "Failed to join: " << resp << std::endl;
+                // Show more details for scheduled exam errors
+                for (const auto& p : parts) {
+                    if (p.find("start_time=") == 0) {
+                        std::cout << "  - Exam starts at: " << p.substr(11) << std::endl;
+                    } else if (p.find("end_time=") == 0) {
+                        std::cout << "  - Exam ends at: " << p.substr(9) << std::endl;
+                    } else if (p.find("current_time=") == 0) {
+                        std::cout << "  - Current time: " << p.substr(13) << std::endl;
+                    }
+                }
             } else {
                 std::cout << "Server: " << resp << std::endl;
             }

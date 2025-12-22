@@ -48,10 +48,18 @@ int startExam(int userId, int quizId, DbManager* db) {
 }
 
 // Get remaining time in seconds
+// For scheduled exams: takes minimum of (time_limit remaining) and (time until exam_end_time)
 int getRemainingTime(int examId, DbManager* db) {
     try {
         std::string sql = 
-            "SELECT q.time_limit - TIMESTAMPDIFF(SECOND, e.start_time, NOW()) as remaining "
+            "SELECT "
+            "  q.time_limit - TIMESTAMPDIFF(SECOND, e.start_time, NOW()) as time_limit_remaining, "
+            "  q.exam_type, "
+            "  CASE "
+            "    WHEN q.exam_type = 'scheduled' AND q.exam_end_time IS NOT NULL "
+            "    THEN TIMESTAMPDIFF(SECOND, NOW(), q.exam_end_time) "
+            "    ELSE NULL "
+            "  END as exam_end_remaining "
             "FROM Exams e "
             "JOIN Quizzes q ON e.quiz_id = q.quiz_id "
             "WHERE e.exam_id = " + std::to_string(examId) + 
@@ -59,12 +67,22 @@ int getRemainingTime(int examId, DbManager* db) {
         
         sql::ResultSet* res = db->executeQuery(sql);
         if (res && res->next()) {
-            int remaining = res->getInt("remaining");
+            int timeLimitRemaining = res->getInt("time_limit_remaining");
+            std::string examType = res->getString("exam_type");
+            
+            int remaining = timeLimitRemaining;
+            
+            // For scheduled exams, take the minimum of time_limit and exam_end_time
+            if (examType == "scheduled" && !res->isNull("exam_end_remaining")) {
+                int examEndRemaining = res->getInt("exam_end_remaining");
+                remaining = std::min(timeLimitRemaining, examEndRemaining);
+            }
+            
             delete res;
-            return remaining > 0 ? remaining : 0; // Trả về 0 nếu hết thời gian
+            return remaining > 0 ? remaining : 0; // Return 0 if time is up
         }
         delete res;
-        return -1; // Exam không tồn tại hoặc đã submit
+        return -1; // Exam does not exist or already submitted
     } catch (sql::SQLException& e) {
         std::cerr << "[GET_REMAINING_TIME] SQL error: " << e.what() << std::endl;
         return -1;

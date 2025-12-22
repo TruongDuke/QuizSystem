@@ -249,12 +249,16 @@ void handleJoinRoom(const std::vector<std::string>& parts, int sock,
             return;
         }
         
+        // For scheduled exams: calculate actual time limit based on exam_end_time
+        int actualTimeLimit = timeLimit; // Default to quiz time_limit
+        
         // Check scheduled exam time window
         if (examType == "scheduled") {
             std::string timeCheckSql =
                 "SELECT q.exam_start_time, q.exam_end_time, "
                 "       NOW() as `current_time`, "
-                "       (NOW() >= q.exam_start_time AND NOW() <= q.exam_end_time) as in_time_window "
+                "       (NOW() >= q.exam_start_time AND NOW() <= q.exam_end_time) as in_time_window, "
+                "       TIMESTAMPDIFF(SECOND, NOW(), q.exam_end_time) as seconds_until_end "
                 "FROM Quizzes q "
                 "WHERE q.quiz_id = " + std::to_string(quizId) + ";";
             
@@ -264,6 +268,7 @@ void handleJoinRoom(const std::vector<std::string>& parts, int sock,
                 std::string startTime = timeRes->getString("exam_start_time");
                 std::string endTime = timeRes->getString("exam_end_time");
                 std::string currentTime = timeRes->getString("current_time");
+                int secondsUntilEnd = timeRes->getInt("seconds_until_end");
                 delete timeRes;
                 
                 if (!inTimeWindow) {
@@ -274,6 +279,13 @@ void handleJoinRoom(const std::vector<std::string>& parts, int sock,
                        << "current_time=" << currentTime;
                     sendLine(sock, ss.str());
                     return;
+                }
+                
+                // For scheduled exams: actual time = min(time_limit, seconds until exam ends)
+                if (secondsUntilEnd > 0 && secondsUntilEnd < timeLimit) {
+                    actualTimeLimit = secondsUntilEnd;
+                    std::cout << "[JOIN_ROOM] Scheduled exam: adjusted time limit from " 
+                              << timeLimit << "s to " << actualTimeLimit << "s (exam ends at " << endTime << ")" << std::endl;
                 }
             } else {
                 delete timeRes;
@@ -301,9 +313,9 @@ void handleJoinRoom(const std::vector<std::string>& parts, int sock,
         clientInfo->currentQuestionIndex = 0;
         clientInfo->questionIds = questionIds;
         
-        // Send TEST_STARTED with time limit (in minutes)
-        int timeLimitMinutes = timeLimit / 60;
-        sendLine(sock, "TEST_STARTED|" + std::to_string(timeLimitMinutes));
+        // Send TEST_STARTED with time limit (in seconds for more precision)
+        // Client will receive actual available time
+        sendLine(sock, "TEST_STARTED|" + std::to_string(actualTimeLimit) + "|" + examType);
         
         // Send first question
         sendQuestion(sock, questionIds[0], db);
