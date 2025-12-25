@@ -4,6 +4,8 @@
 #include <string>
 #include <limits>
 #include <cctype>
+#include <sys/select.h>
+#include <unistd.h>
  
 void enterExamRoom(int sock, const std::string& roomId) {
     std::cout << "\n[ROOM " << roomId << "] Joined successfully.\n";
@@ -61,20 +63,62 @@ void enterExamRoom(int sock, const std::string& roomId) {
             std::cout << "Your answer (A/B/C/D): ";
             std::cout.flush();
             
-            // Read first character only, ignore the rest of the line
-            char ch;
-            std::cin >> ch;
-            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-            
-            ans = toupper(ch);
-            
-            // Validate answer input
-            while (ans != "A" && ans != "B" && ans != "C" && ans != "D") {
-                std::cout << "Invalid choice! Please enter A, B, C, or D: ";
-                std::cout.flush();
-                std::cin >> ch;
-                std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-                ans = toupper(ch);
+            // Check for messages from server while waiting for input
+            // Use a loop to periodically check socket for END_EXAM
+            bool gotAnswer = false;
+            while (!gotAnswer) {
+                // Check if server has sent a message (non-blocking check)
+                if (hasData(sock, 0)) {
+                    // Server sent a message, read it first
+                    std::string serverMsg = recvLine(sock);
+                    if (!serverMsg.empty()) {
+                        std::cout << "\n[DEBUG CLIENT] Received while waiting for input: " << serverMsg << std::endl;
+                        // Process the message - might be END_EXAM
+                        auto serverParts = split(serverMsg, '|');
+                        if (!serverParts.empty() && serverParts[0] == "END_EXAM") {
+                            // Exam ended, show results
+                            std::cout << "\n===================================\n";
+                            std::cout << "           EXAM FINISHED           \n";
+                            std::cout << "===================================\n";
+                            if (serverParts.size() >= 2) {
+                                std::cout << "\nYour Score: " << serverParts[1] << std::endl;
+                            }
+                            if (serverParts.size() >= 3) {
+                                std::cout << "Correct Answers: " << serverParts[2] << std::endl;
+                            }
+                            std::cout << "\nPress Enter to return to menu...";
+                            std::cin.ignore();
+                            std::cin.get();
+                            return; // Exit exam room
+                        }
+                        // If not END_EXAM, continue waiting for input
+                    }
+                }
+                
+                // Check if stdin has input (non-blocking)
+                fd_set readfds;
+                struct timeval timeout;
+                FD_ZERO(&readfds);
+                FD_SET(0, &readfds); // stdin = 0
+                timeout.tv_sec = 0;
+                timeout.tv_usec = 100000; // 0.1 second
+                
+                if (select(1, &readfds, NULL, NULL, &timeout) > 0 && FD_ISSET(0, &readfds)) {
+                    // User entered input
+                    char ch;
+                    std::cin >> ch;
+                    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+                    
+                    ans = toupper(ch);
+                    
+                    // Validate answer input
+                    if (ans == "A" || ans == "B" || ans == "C" || ans == "D") {
+                        gotAnswer = true;
+                    } else {
+                        std::cout << "Invalid choice! Please enter A, B, C, or D: ";
+                        std::cout.flush();
+                    }
+                }
             }
             
             std::string answerMsg = "ANSWER|" + parts[1] + "|" + ans;

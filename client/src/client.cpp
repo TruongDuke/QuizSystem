@@ -4,6 +4,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <sys/select.h>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -25,6 +26,21 @@ std::string recvLine(int sock) {
         line.push_back(c);
     }
     return line;
+}
+
+// Check if socket has data available (non-blocking)
+bool hasData(int sock, int timeoutSeconds) {
+    fd_set readfds;
+    struct timeval timeout;
+    
+    FD_ZERO(&readfds);
+    FD_SET(sock, &readfds);
+    
+    timeout.tv_sec = timeoutSeconds;
+    timeout.tv_usec = 0;
+    
+    int result = select(sock + 1, &readfds, NULL, NULL, timeoutSeconds > 0 ? &timeout : NULL);
+    return result > 0 && FD_ISSET(sock, &readfds);
 }
 
 void sendLine(int sock, const std::string &msg) {

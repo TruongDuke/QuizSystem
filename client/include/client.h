@@ -6,6 +6,7 @@
 
 // Network helpers
 std::string recvLine(int sock);
+bool hasData(int sock, int timeoutSeconds = 0); // Check if socket has data (non-blocking)
 void sendLine(int sock, const std::string &msg);
 
 // String utilities
