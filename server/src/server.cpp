@@ -332,18 +332,23 @@ void handleJoinRoom(const std::vector<std::string>& parts, int sock,
 // ANSWER|qId|choice
 void handleAnswer(const std::vector<std::string>& parts, int sock,
                  DbManager* db, ClientManager& clientMgr) {
+    std::cout << "[ANSWER] Received ANSWER command from client " << sock << std::endl;
+    
     if (parts.size() != 3) {
+        std::cerr << "[ANSWER] Bad format: expected 3 parts, got " << parts.size() << std::endl;
         sendLine(sock, "ANSWER_FAIL|reason=bad_format");
         return;
     }
     
     ClientInfo* clientInfo = clientMgr.getClient(sock);
     if (!clientInfo || clientInfo->role != "student") {
+        std::cerr << "[ANSWER] Permission denied for client " << sock << std::endl;
         sendLine(sock, "ANSWER_FAIL|reason=permission_denied");
         return;
     }
     
     if (clientInfo->currentExamId == 0) {
+        std::cerr << "[ANSWER] No active exam for client " << sock << std::endl;
         sendLine(sock, "ANSWER_FAIL|reason=no_active_exam");
         return;
     }
@@ -352,11 +357,14 @@ void handleAnswer(const std::vector<std::string>& parts, int sock,
     try {
         questionId = std::stoi(parts[1]);
     } catch (...) {
+        std::cerr << "[ANSWER] Bad question ID: " << parts[1] << std::endl;
         sendLine(sock, "ANSWER_FAIL|reason=bad_question_id");
         return;
     }
     
     std::string choice = parts[2]; // A, B, C, or D
+    std::cout << "[ANSWER] Processing answer: questionId=" << questionId 
+              << ", choice=" << choice << ", examId=" << clientInfo->currentExamId << std::endl;
     
     try {
         // Get answer text based on choice (A=1, B=2, C=3, D=4)
@@ -429,10 +437,14 @@ void handleAnswer(const std::vector<std::string>& parts, int sock,
             int nextQuestionId = clientInfo->questionIds[clientInfo->currentQuestionIndex];
             std::cout << "[ANSWER] Sending next question " << nextQuestionId << " to client " << sock << std::endl;
             sendQuestion(sock, nextQuestionId, db);
+            std::cout << "[ANSWER] Next question sent successfully" << std::endl;
         } else {
             // All questions answered, submit exam and send results
+            std::cout << "[ANSWER] All questions answered! Submitting exam..." << std::endl;
             int examId = clientInfo->currentExamId; // Save before reset
+            std::cout << "[ANSWER] Calling submitExam for examId=" << examId << std::endl;
             submitExam(examId, db);
+            std::cout << "[ANSWER] Exam submitted successfully" << std::endl;
             
             // Get score
             std::string getScoreSql =
@@ -459,7 +471,10 @@ void handleAnswer(const std::vector<std::string>& parts, int sock,
             // Send END_EXAM with score
             std::stringstream ss;
             ss << "END_EXAM|" << score << "|" << correctCount;
-            sendLine(sock, ss.str());
+            std::string endExamMsg = ss.str();
+            std::cout << "[ANSWER] Sending END_EXAM: " << endExamMsg << std::endl;
+            sendLine(sock, endExamMsg);
+            std::cout << "[ANSWER] END_EXAM sent successfully" << std::endl;
             
             std::cout << "[ANSWER] Exam " << examId
                       << " completed, score = " << score << std::endl;
@@ -468,6 +483,9 @@ void handleAnswer(const std::vector<std::string>& parts, int sock,
     } catch (sql::SQLException& e) {
         std::cerr << "[ANSWER] SQL error: " << e.what() << std::endl;
         sendLine(sock, "ANSWER_FAIL|reason=sql_error");
+    } catch (std::exception& e) {
+        std::cerr << "[ANSWER] Exception: " << e.what() << std::endl;
+        sendLine(sock, "ANSWER_FAIL|reason=unknown_error");
     }
 }
  

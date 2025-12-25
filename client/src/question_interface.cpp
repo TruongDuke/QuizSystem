@@ -18,8 +18,8 @@ void enterExamRoom(int sock, const std::string& roomId) {
             return;
         }
  
-        // Debug: show received message (can be removed later)
-        // std::cout << "[DEBUG] Received: " << msg << std::endl;
+        // Debug: show received message
+        std::cout << "[DEBUG CLIENT] Received: " << msg << std::endl;
  
         auto parts = split(msg, '|');
         if (parts.empty()) continue;
@@ -77,7 +77,10 @@ void enterExamRoom(int sock, const std::string& roomId) {
                 ans = toupper(ch);
             }
             
-            sendLine(sock, "ANSWER|" + parts[1] + "|" + ans);
+            std::string answerMsg = "ANSWER|" + parts[1] + "|" + ans;
+            sendLine(sock, answerMsg);
+            std::cout << "[DEBUG CLIENT] Sent: " << answerMsg << std::endl;
+            std::cout << "[DEBUG CLIENT] Waiting for next message from server..." << std::endl;
             // Continue to wait for next message (QUESTION, END_EXAM, or ANSWER_FAIL)
             continue;
  
