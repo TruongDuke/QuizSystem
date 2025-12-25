@@ -148,6 +148,22 @@ void checkExpiredExams(DbManager* db) {
 // Submit exam manually or automatically
 void submitExam(int examId, DbManager* db) {
     try {
+        // Kiểm tra exam status trước - chỉ submit nếu chưa submitted
+        std::string checkSql = 
+            "SELECT status FROM Exams WHERE exam_id = " + 
+            std::to_string(examId) + ";";
+        sql::ResultSet* checkRes = db->executeQuery(checkSql);
+        if (checkRes && checkRes->next()) {
+            std::string status = checkRes->getString("status");
+            if (status == "submitted") {
+                std::cout << "[SUBMIT_EXAM] Exam " << examId 
+                          << " already submitted, skipping" << std::endl;
+                delete checkRes;
+                return; // Đã submitted rồi, không làm gì
+            }
+        }
+        delete checkRes;
+        
         // Calculate score before submitting
         calculateScore(examId, db);
         

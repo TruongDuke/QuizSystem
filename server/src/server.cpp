@@ -365,6 +365,50 @@ void handleAnswer(const std::vector<std::string>& parts, int sock,
         return;
     }
     
+    // Kiểm tra exam đã được submit chưa (có thể bởi timer khi hết thời gian)
+    std::string checkStatusSql = 
+        "SELECT status FROM Exams WHERE exam_id = " + 
+        std::to_string(clientInfo->currentExamId) + ";";
+    sql::ResultSet* statusRes = db->executeQuery(checkStatusSql);
+    if (statusRes && statusRes->next()) {
+        std::string examStatus = statusRes->getString("status");
+        if (examStatus == "submitted") {
+            std::cerr << "[ANSWER] Exam " << clientInfo->currentExamId 
+                      << " already submitted (time expired), cannot accept more answers" << std::endl;
+            
+            // Lấy score và gửi END_EXAM cho học sinh
+            std::string getScoreSql = 
+                "SELECT score FROM Exams WHERE exam_id = " + 
+                std::to_string(clientInfo->currentExamId) + ";";
+            sql::ResultSet* scoreRes = db->executeQuery(getScoreSql);
+            double score = 0.0;
+            int correctCount = 0;
+            if (scoreRes && scoreRes->next()) {
+                score = scoreRes->getDouble("score");
+                // Tính số câu đúng từ score
+                if (score > 0 && clientInfo->questionIds.size() > 0) {
+                    correctCount = int((score / 10.0) * clientInfo->questionIds.size() + 0.5);
+                }
+            }
+            delete scoreRes;
+            
+            // Reset exam state
+            clientInfo->currentExamId = 0;
+            clientInfo->currentQuestionIndex = 0;
+            clientInfo->questionIds.clear();
+            
+            // Gửi END_EXAM
+            std::stringstream ss;
+            ss << "END_EXAM|" << score << "|" << correctCount;
+            sendLine(sock, ss.str());
+            std::cout << "[ANSWER] Sent END_EXAM to student (exam already submitted by timer)" << std::endl;
+            
+            delete statusRes;
+            return;
+        }
+    }
+    delete statusRes;
+    
     int questionId;
     try {
         questionId = std::stoi(parts[1]);
