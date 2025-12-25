@@ -75,6 +75,7 @@ void handleAddQuestion(const std::vector<std::string> &parts, int sock, DbManage
     std::string o2 = escapeSql(parts[4]);
     std::string o3 = escapeSql(parts[5]);
     std::string o4 = escapeSql(parts[6]);
+    
 
     try {
         // 1) Questions
