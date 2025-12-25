@@ -7,5 +7,8 @@ void teacherMenu(int sock);
 // Manage questions submenu
 void manageQuestionsMenu(int sock, int quizId);
 
+// Manage question bank menu
+void manageQuestionBankMenu(int sock);
+
 #endif // QUIZ_INTERFACE_H
 

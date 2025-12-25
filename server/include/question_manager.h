@@ -12,5 +12,11 @@ void handleAddQuestion(const std::vector<std::string> &parts, int sock, DbManage
 void handleEditQuestion(const std::vector<std::string> &parts, int sock, DbManager *db);
 void handleDeleteQuestion(const std::vector<std::string> &parts, int sock, DbManager *db);
 
+// Question Bank operations
+void handleListQuestionBank(const std::vector<std::string> &parts, int sock, DbManager *db);
+void handleGetQuestionBank(const std::vector<std::string> &parts, int sock, DbManager *db);
+void handleAddToQuizFromBank(const std::vector<std::string> &parts, int sock, DbManager *db);
+void handleAddToBank(const std::vector<std::string> &parts, int sock, DbManager *db, int userId);
+
 #endif // QUESTION_MANAGER_H
 

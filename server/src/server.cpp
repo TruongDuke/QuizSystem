@@ -623,6 +623,30 @@ void handleCommand(int clientSock, const std::vector<std::string>& parts,
         else
             sendLine(clientSock, "DELETE_QUESTION_FAIL|reason=permission_denied");
             
+    } else if (cmd == "LIST_QUESTION_BANK") {
+        if (role == "teacher")
+            handleListQuestionBank(parts, clientSock, db);
+        else
+            sendLine(clientSock, "LIST_QUESTION_BANK_FAIL|reason=permission_denied");
+            
+    } else if (cmd == "GET_QUESTION_BANK") {
+        if (role == "teacher")
+            handleGetQuestionBank(parts, clientSock, db);
+        else
+            sendLine(clientSock, "GET_QUESTION_BANK_FAIL|reason=permission_denied");
+            
+    } else if (cmd == "ADD_TO_QUIZ_FROM_BANK") {
+        if (role == "teacher")
+            handleAddToQuizFromBank(parts, clientSock, db);
+        else
+            sendLine(clientSock, "ADD_TO_QUIZ_FROM_BANK_FAIL|reason=permission_denied");
+            
+    } else if (cmd == "ADD_TO_BANK") {
+        if (role == "teacher")
+            handleAddToBank(parts, clientSock, db, clientInfo->userId);
+        else
+            sendLine(clientSock, "ADD_TO_BANK_FAIL|reason=permission_denied");
+            
     } else if (cmd == "LIST_EXAMS") {
         handleListExams(clientSock, db);
         

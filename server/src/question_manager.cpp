@@ -201,3 +201,275 @@ void handleDeleteQuestion(const std::vector<std::string> &parts, int sock, DbMan
     }
 }
 
+// ==================================================
+// QUESTION BANK
+// ==================================================
+
+// LIST_QUESTION_BANK|topic|difficulty
+// Nếu topic hoặc difficulty là "all" hoặc rỗng thì không lọc theo đó
+void handleListQuestionBank(const std::vector<std::string> &parts, int sock, DbManager *db) {
+    std::string query = "SELECT bank_question_id, question_text, difficulty, topic FROM QuestionBank WHERE 1=1";
+    
+    // Lọc theo topic nếu có
+    if (parts.size() >= 2 && !parts[1].empty() && parts[1] != "all") {
+        std::string topic = escapeSql(parts[1]);
+        query += " AND topic LIKE '%" + topic + "%'";
+    }
+    
+    // Lọc theo difficulty nếu có
+    if (parts.size() >= 3 && !parts[2].empty() && parts[2] != "all") {
+        std::string difficulty = escapeSql(parts[2]);
+        if (difficulty == "easy" || difficulty == "medium" || difficulty == "hard") {
+            query += " AND difficulty = '" + difficulty + "'";
+        }
+    }
+    
+    query += " ORDER BY topic, difficulty;";
+
+    try {
+        sql::ResultSet *res = db->executeQuery(query);
+        if (!res) {
+            sendLine(sock, "LIST_QUESTION_BANK_FAIL|reason=db_error");
+            return;
+        }
+
+        std::stringstream ss;
+        ss << "QUESTION_BANK|";
+        bool first = true;
+        int count = 0;
+        while (res->next()) {
+            if (!first) ss << ";";
+            first = false;
+            int bid = res->getInt("bank_question_id");
+            std::string text = res->getString("question_text");
+            std::string diff = res->getString("difficulty");
+            std::string topic = res->getString("topic");
+            ss << bid << ":" << text << "[" << diff << "," << topic << "]";
+            count++;
+        }
+        delete res;
+        
+        if (count == 0) {
+            ss << "No questions found";
+        }
+        
+        sendLine(sock, ss.str());
+    } catch (sql::SQLException &e) {
+        std::cerr << "[LIST_QUESTION_BANK] SQL error: " << e.what() << std::endl;
+        sendLine(sock, "LIST_QUESTION_BANK_FAIL|reason=sql_error");
+    }
+}
+
+// GET_QUESTION_BANK|bankQuestionId
+void handleGetQuestionBank(const std::vector<std::string> &parts, int sock, DbManager *db) {
+    if (parts.size() != 2) {
+        sendLine(sock, "GET_QUESTION_BANK_FAIL|reason=bad_format");
+        return;
+    }
+
+    int bankQId;
+    try {
+        bankQId = std::stoi(parts[1]);
+    } catch (...) {
+        sendLine(sock, "GET_QUESTION_BANK_FAIL|reason=bad_number");
+        return;
+    }
+
+    try {
+        // Lấy câu hỏi
+        std::string qQuery = 
+            "SELECT question_text, difficulty, topic FROM QuestionBank "
+            "WHERE bank_question_id=" + std::to_string(bankQId) + ";";
+        
+        sql::ResultSet *qRes = db->executeQuery(qQuery);
+        if (!qRes || !qRes->next()) {
+            sendLine(sock, "GET_QUESTION_BANK_FAIL|reason=not_found");
+            if (qRes) delete qRes;
+            return;
+        }
+
+        std::string qText = qRes->getString("question_text");
+        std::string diff = qRes->getString("difficulty");
+        std::string topic = qRes->getString("topic");
+        delete qRes;
+
+        // Lấy đáp án
+        std::string aQuery = 
+            "SELECT answer_text, is_correct FROM BankAnswers "
+            "WHERE bank_question_id=" + std::to_string(bankQId) + " "
+            "ORDER BY bank_answer_id;";
+        
+        sql::ResultSet *aRes = db->executeQuery(aQuery);
+        if (!aRes) {
+            sendLine(sock, "GET_QUESTION_BANK_FAIL|reason=db_error");
+            return;
+        }
+
+        std::stringstream ss;
+        ss << "QUESTION_BANK_DETAIL|" << bankQId << "|" << qText << "|" 
+           << diff << "|" << topic << "|";
+        
+        int correctIndex = 0;
+        int index = 1;
+        while (aRes->next()) {
+            if (index > 1) ss << "|";
+            std::string ans = aRes->getString("answer_text");
+            bool isCorrect = aRes->getBoolean("is_correct");
+            ss << ans;
+            if (isCorrect) correctIndex = index;
+            index++;
+        }
+        ss << "|" << correctIndex;
+        delete aRes;
+
+        sendLine(sock, ss.str());
+    } catch (sql::SQLException &e) {
+        std::cerr << "[GET_QUESTION_BANK] SQL error: " << e.what() << std::endl;
+        sendLine(sock, "GET_QUESTION_BANK_FAIL|reason=sql_error");
+    }
+}
+
+// ADD_TO_QUIZ_FROM_BANK|quizId|bankQuestionId
+void handleAddToQuizFromBank(const std::vector<std::string> &parts, int sock, DbManager *db) {
+    if (parts.size() != 3) {
+        sendLine(sock, "ADD_TO_QUIZ_FROM_BANK_FAIL|reason=bad_format");
+        return;
+    }
+
+    int quizId, bankQId;
+    try {
+        quizId = std::stoi(parts[1]);
+        bankQId = std::stoi(parts[2]);
+    } catch (...) {
+        sendLine(sock, "ADD_TO_QUIZ_FROM_BANK_FAIL|reason=bad_number");
+        return;
+    }
+
+    try {
+        // Lấy thông tin câu hỏi từ ngân hàng
+        std::string qQuery = 
+            "SELECT question_text, difficulty, topic FROM QuestionBank "
+            "WHERE bank_question_id=" + std::to_string(bankQId) + ";";
+        
+        sql::ResultSet *qRes = db->executeQuery(qQuery);
+        if (!qRes || !qRes->next()) {
+            sendLine(sock, "ADD_TO_QUIZ_FROM_BANK_FAIL|reason=question_not_found");
+            if (qRes) delete qRes;
+            return;
+        }
+
+        std::string qText = escapeSql(qRes->getString("question_text"));
+        std::string diff = qRes->getString("difficulty");
+        std::string topic = escapeSql(qRes->getString("topic"));
+        delete qRes;
+
+        // Thêm vào Questions
+        std::string insertQ = 
+            "INSERT INTO Questions (quiz_id, question_text, difficulty, topic) "
+            "VALUES (" + std::to_string(quizId) + ", '" + qText + 
+            "', '" + diff + "', '" + topic + "');";
+        
+        int questionId = db->executeInsertAndGetId(insertQ);
+        if (questionId == 0) {
+            sendLine(sock, "ADD_TO_QUIZ_FROM_BANK_FAIL|reason=sql_error");
+            return;
+        }
+
+        // Lấy đáp án từ ngân hàng và thêm vào Answers
+        std::string aQuery = 
+            "SELECT answer_text, is_correct FROM BankAnswers "
+            "WHERE bank_question_id=" + std::to_string(bankQId) + " "
+            "ORDER BY bank_answer_id;";
+        
+        sql::ResultSet *aRes = db->executeQuery(aQuery);
+        if (!aRes) {
+            sendLine(sock, "ADD_TO_QUIZ_FROM_BANK_FAIL|reason=db_error");
+            return;
+        }
+
+        while (aRes->next()) {
+            std::string ansText = escapeSql(aRes->getString("answer_text"));
+            bool isCorrect = aRes->getBoolean("is_correct");
+            
+            std::string insertA = 
+                "INSERT INTO Answers (question_id, answer_text, is_correct) "
+                "VALUES (" + std::to_string(questionId) + ", '" + ansText + 
+                "', " + (isCorrect ? "1" : "0") + ");";
+            db->executeUpdate(insertA);
+        }
+        delete aRes;
+
+        sendLine(sock, "ADD_TO_QUIZ_FROM_BANK_OK|questionId=" + std::to_string(questionId));
+        std::cout << "[ADD_TO_QUIZ_FROM_BANK] question " << bankQId 
+                  << " added to quiz " << quizId << ", new qid=" << questionId << std::endl;
+
+    } catch (sql::SQLException &e) {
+        std::cerr << "[ADD_TO_QUIZ_FROM_BANK] SQL error: " << e.what() << std::endl;
+        sendLine(sock, "ADD_TO_QUIZ_FROM_BANK_FAIL|reason=sql_error");
+    }
+}
+
+// ADD_TO_BANK|content|opt1|opt2|opt3|opt4|correctIndex|difficulty|topic
+void handleAddToBank(const std::vector<std::string> &parts, int sock, DbManager *db, int userId) {
+    if (parts.size() != 9) {
+        sendLine(sock, "ADD_TO_BANK_FAIL|reason=bad_format");
+        return;
+    }
+
+    int correct;
+    try {
+        correct = std::stoi(parts[6]);
+    } catch (...) {
+        sendLine(sock, "ADD_TO_BANK_FAIL|reason=bad_number");
+        return;
+    }
+
+    std::string content = escapeSql(parts[1]);
+    std::string o1 = escapeSql(parts[2]);
+    std::string o2 = escapeSql(parts[3]);
+    std::string o3 = escapeSql(parts[4]);
+    std::string o4 = escapeSql(parts[5]);
+    std::string diff = escapeSql(parts[7]);
+    std::string topic = escapeSql(parts[8]);
+
+    // Validate difficulty
+    if (diff != "easy" && diff != "medium" && diff != "hard") {
+        sendLine(sock, "ADD_TO_BANK_FAIL|reason=invalid_difficulty");
+        return;
+    }
+
+    try {
+        // Thêm vào QuestionBank
+        std::string qInsert = 
+            "INSERT INTO QuestionBank (question_text, difficulty, topic, created_by) "
+            "VALUES ('" + content + "', '" + diff + "', '" + topic + "', " + 
+            std::to_string(userId) + ");";
+
+        int bankQId = db->executeInsertAndGetId(qInsert);
+        if (bankQId == 0) {
+            sendLine(sock, "ADD_TO_BANK_FAIL|reason=sql_error");
+            return;
+        }
+
+        // Thêm đáp án
+        auto insertAns = [&](const std::string &txt, int index) {
+            std::string a = 
+                "INSERT INTO BankAnswers (bank_question_id, answer_text, is_correct) "
+                "VALUES (" + std::to_string(bankQId) + ", '" + escapeSql(txt) + 
+                "', " + (index == correct ? "1" : "0") + ");";
+            db->executeUpdate(a);
+        };
+
+        insertAns(o1, 1);
+        insertAns(o2, 2);
+        insertAns(o3, 3);
+        insertAns(o4, 4);
+
+        sendLine(sock, "ADD_TO_BANK_OK|bankQuestionId=" + std::to_string(bankQId));
+        std::cout << "[ADD_TO_BANK] question added to bank, bid=" << bankQId << std::endl;
+    } catch (sql::SQLException &e) {
+        std::cerr << "[ADD_TO_BANK] SQL error: " << e.what() << std::endl;
+        sendLine(sock, "ADD_TO_BANK_FAIL|reason=sql_error");
+    }
+}
+
