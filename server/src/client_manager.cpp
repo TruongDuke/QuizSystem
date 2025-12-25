@@ -27,6 +27,15 @@ ClientInfo* ClientManager::getClient(int sock) {
     return nullptr;
 }
 
+ClientInfo* ClientManager::getClientByUserId(int userId) {
+    for (auto& pair : clients) {
+        if (pair.second.authenticated && pair.second.userId == userId) {
+            return &pair.second;
+        }
+    }
+    return nullptr;
+}
+
 std::vector<int> ClientManager::getAllClients() {
     std::vector<int> result;
     for (auto& pair : clients) {

@@ -1,5 +1,7 @@
 #include "../include/exam_manager.h"
 #include "../include/db_manager.h"
+#include "../include/client_manager.h"
+#include "../include/protocol_manager.h"
 #include <mysql_driver.h>
 #include <mysql_connection.h>
 #include <cppconn/resultset.h>
@@ -7,6 +9,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cctype>
+#include <sstream>
 
 // ==================================================
 // EXAM OPERATIONS
@@ -90,7 +93,7 @@ int getRemainingTime(int examId, DbManager* db) {
 }
 
 // Check and auto-submit expired exams
-void checkExpiredExams(DbManager* db) {
+void checkExpiredExams(DbManager* db, ClientManager& clientMgr) {
     try {
         // 1. Tìm các exam đã hết thời gian làm bài (time_limit)
         std::string findExpiredSql = 
@@ -102,16 +105,51 @@ void checkExpiredExams(DbManager* db) {
         
         sql::ResultSet* res = db->executeQuery(findExpiredSql);
         if (res) {
-            std::vector<int> expiredExamIds;
+            std::vector<std::pair<int, int>> expiredExams; // (examId, userId)
             while (res->next()) {
-                expiredExamIds.push_back(res->getInt("exam_id"));
+                expiredExams.push_back({res->getInt("exam_id"), res->getInt("user_id")});
             }
             delete res;
             
             // Auto-submit các exam đã hết thời gian làm bài
-            for (int examId : expiredExamIds) {
+            for (auto& exam : expiredExams) {
+                int examId = exam.first;
+                int userId = exam.second;
+                
                 submitExam(examId, db);
                 std::cout << "[TIMER] Auto-submitted expired exam (time_limit): " << examId << std::endl;
+                
+                // Tìm client và gửi END_EXAM
+                ClientInfo* clientInfo = clientMgr.getClientByUserId(userId);
+                if (clientInfo && clientInfo->currentExamId == examId) {
+                    // Lấy score
+                    std::string getScoreSql = 
+                        "SELECT score FROM Exams WHERE exam_id = " + 
+                        std::to_string(examId) + ";";
+                    sql::ResultSet* scoreRes = db->executeQuery(getScoreSql);
+                    double score = 0.0;
+                    int correctCount = 0;
+                    if (scoreRes && scoreRes->next()) {
+                        score = scoreRes->getDouble("score");
+                        // Tính số câu đúng từ score
+                        if (score > 0 && clientInfo->questionIds.size() > 0) {
+                            correctCount = int((score / 10.0) * clientInfo->questionIds.size() + 0.5);
+                        }
+                    }
+                    delete scoreRes;
+                    
+                    // Gửi END_EXAM
+                    std::stringstream ss;
+                    ss << "END_EXAM|" << score << "|" << correctCount;
+                    sendLine(clientInfo->sock, ss.str());
+                    std::cout << "[TIMER] Sent END_EXAM to student (userId=" << userId 
+                              << ", sock=" << clientInfo->sock << ")" << std::endl;
+                    
+                    // Reset exam state
+                    clientInfo->currentExamId = 0;
+                    clientInfo->currentQuestionIndex = 0;
+                    clientInfo->questionIds.clear();
+                }
             }
         }
         
@@ -127,16 +165,52 @@ void checkExpiredExams(DbManager* db) {
         
         sql::ResultSet* scheduledRes = db->executeQuery(findScheduledExpiredSql);
         if (scheduledRes) {
-            std::vector<int> scheduledExpiredIds;
+            std::vector<std::pair<int, int>> scheduledExpiredExams; // (examId, userId)
             while (scheduledRes->next()) {
-                scheduledExpiredIds.push_back(scheduledRes->getInt("exam_id"));
+                scheduledExpiredExams.push_back({scheduledRes->getInt("exam_id"), 
+                                                 scheduledRes->getInt("user_id")});
             }
             delete scheduledRes;
             
             // Auto-submit các scheduled exam đã vượt quá exam_end_time
-            for (int examId : scheduledExpiredIds) {
+            for (auto& exam : scheduledExpiredExams) {
+                int examId = exam.first;
+                int userId = exam.second;
+                
                 submitExam(examId, db);
                 std::cout << "[TIMER] Auto-submitted scheduled exam (past exam_end_time): " << examId << std::endl;
+                
+                // Tìm client và gửi END_EXAM
+                ClientInfo* clientInfo = clientMgr.getClientByUserId(userId);
+                if (clientInfo && clientInfo->currentExamId == examId) {
+                    // Lấy score
+                    std::string getScoreSql = 
+                        "SELECT score FROM Exams WHERE exam_id = " + 
+                        std::to_string(examId) + ";";
+                    sql::ResultSet* scoreRes = db->executeQuery(getScoreSql);
+                    double score = 0.0;
+                    int correctCount = 0;
+                    if (scoreRes && scoreRes->next()) {
+                        score = scoreRes->getDouble("score");
+                        // Tính số câu đúng từ score
+                        if (score > 0 && clientInfo->questionIds.size() > 0) {
+                            correctCount = int((score / 10.0) * clientInfo->questionIds.size() + 0.5);
+                        }
+                    }
+                    delete scoreRes;
+                    
+                    // Gửi END_EXAM
+                    std::stringstream ss;
+                    ss << "END_EXAM|" << score << "|" << correctCount;
+                    sendLine(clientInfo->sock, ss.str());
+                    std::cout << "[TIMER] Sent END_EXAM to student (userId=" << userId 
+                              << ", sock=" << clientInfo->sock << ")" << std::endl;
+                    
+                    // Reset exam state
+                    clientInfo->currentExamId = 0;
+                    clientInfo->currentQuestionIndex = 0;
+                    clientInfo->questionIds.clear();
+                }
             }
         }
         

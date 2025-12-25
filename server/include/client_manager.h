@@ -25,6 +25,7 @@ public:
     void addClient(int sock);
     void removeClient(int sock);
     ClientInfo* getClient(int sock);
+    ClientInfo* getClientByUserId(int userId); // Tìm client theo userId
     std::vector<int> getAllClients();
     std::vector<int> getClientsByRole(const std::string& role);
     void setClientInfo(int sock, const std::string& sessionId, 

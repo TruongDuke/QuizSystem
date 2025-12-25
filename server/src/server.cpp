@@ -798,10 +798,10 @@ void handleCommand(int clientSock, const std::vector<std::string>& parts,
 // Timer Thread - Check expired exams
 // ==================================================
  
-void timerThread(DbManager* db) {
+void timerThread(DbManager* db, ClientManager& clientMgr) {
     while (true) {
         std::this_thread::sleep_for(std::chrono::seconds(5));
-        checkExpiredExams(db);
+        checkExpiredExams(db, clientMgr);
     }
 }
  
@@ -813,12 +813,12 @@ int main() {
     DbManager *db = new DbManager("127.0.0.1", "root", "123456", "quizDB");
     std::cout << "[DB] Connected to quizDB\n";
     
+    ClientManager& clientMgr = ClientManager::getInstance();
+    
     // Start timer thread to check expired exams
-    std::thread timer(timerThread, db);
+    std::thread timer(timerThread, db, std::ref(clientMgr));
     timer.detach(); // Run in background
     std::cout << "[TIMER] Timer thread started - checking expired exams every 5 seconds\n";
-    
-    ClientManager& clientMgr = ClientManager::getInstance();
     
     int serverSock = socket(AF_INET, SOCK_STREAM, 0);
     if (serverSock < 0) {
