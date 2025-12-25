@@ -167,6 +167,7 @@ void sendQuestion(int sock, int questionId, DbManager* db) {
         
         sql::ResultSet* aRes = db->executeQuery(aSql);
         if (!aRes) {
+            std::cerr << "[SEND_QUESTION] ERROR: Failed to query answers for question " << questionId << std::endl;
             sendLine(sock, "QUESTION_FAIL|reason=answers_not_found");
             return;
         }
@@ -179,10 +180,21 @@ void sendQuestion(int sock, int questionId, DbManager* db) {
         }
         delete aRes;
         
+        // Check if question has no answers
+        if (answers.empty()) {
+            std::cerr << "[SEND_QUESTION] ERROR: Question " << questionId 
+                      << " has no answers in database!" << std::endl;
+            sendLine(sock, "QUESTION_FAIL|reason=question_has_no_answers");
+            return;
+        }
+        
         // Pad with empty strings if less than 4 answers
         while (answers.size() < 4) {
             answers.push_back("");
         }
+        
+        std::cout << "[SEND_QUESTION] Question " << questionId 
+                  << " has " << answers.size() << " answers" << std::endl;
         
         // Send question: QUESTION|qId|text|A|B|C|D
         std::stringstream ss;

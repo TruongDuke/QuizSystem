@@ -383,21 +383,69 @@ void handleAddToQuizFromBank(const std::vector<std::string> &parts, int sock, Db
         
         sql::ResultSet *aRes = db->executeQuery(aQuery);
         if (!aRes) {
+            std::cerr << "[ADD_TO_QUIZ_FROM_BANK] ERROR: Failed to query answers from bank" << std::endl;
             sendLine(sock, "ADD_TO_QUIZ_FROM_BANK_FAIL|reason=db_error");
             return;
         }
 
+        int answerCount = 0;
+        bool hasError = false;
+        
         while (aRes->next()) {
-            std::string ansText = escapeSql(aRes->getString("answer_text"));
+            std::string ansText = aRes->getString("answer_text");
             bool isCorrect = aRes->getBoolean("is_correct");
             
+            std::cout << "[ADD_TO_QUIZ_FROM_BANK] Copying answer: '" << ansText 
+                      << "' (correct=" << (isCorrect ? "yes" : "no") << ")" << std::endl;
+            
+            std::string escapedText = escapeSql(ansText);
             std::string insertA = 
                 "INSERT INTO Answers (question_id, answer_text, is_correct) "
-                "VALUES (" + std::to_string(questionId) + ", '" + ansText + 
+                "VALUES (" + std::to_string(questionId) + ", '" + escapedText + 
                 "', " + (isCorrect ? "1" : "0") + ");";
-            db->executeUpdate(insertA);
+            
+            // Thử insert và kiểm tra xem có thành công không
+            // Vì executeUpdate không throw, ta cần verify bằng cách query lại
+            try {
+                db->executeUpdate(insertA);
+                
+                // Verify: Query lại để đảm bảo answer đã được insert
+                std::string verifySql = 
+                    "SELECT COUNT(*) as cnt FROM Answers WHERE question_id=" + 
+                    std::to_string(questionId) + " AND answer_text='" + escapedText + "';";
+                sql::ResultSet* verifyRes = db->executeQuery(verifySql);
+                if (verifyRes && verifyRes->next() && verifyRes->getInt("cnt") > 0) {
+                    answerCount++;
+                    std::cout << "[ADD_TO_QUIZ_FROM_BANK] Answer " << answerCount 
+                              << " inserted and verified successfully" << std::endl;
+                } else {
+                    std::cerr << "[ADD_TO_QUIZ_FROM_BANK] ERROR: Answer insertion failed verification!" << std::endl;
+                    hasError = true;
+                }
+                delete verifyRes;
+            } catch (sql::SQLException& e) {
+                std::cerr << "[ADD_TO_QUIZ_FROM_BANK] ERROR inserting answer: " 
+                          << e.what() << std::endl;
+                hasError = true;
+            }
         }
         delete aRes;
+        
+        // Validate: Câu hỏi phải có ít nhất 1 đáp án
+        if (answerCount == 0 || hasError) {
+            std::cerr << "[ADD_TO_QUIZ_FROM_BANK] ERROR: Failed to copy answers! "
+                      << "answerCount=" << answerCount << ", hasError=" << hasError << std::endl;
+            // Xóa câu hỏi đã thêm vì không có đáp án hoặc có lỗi
+            std::string deleteQ = "DELETE FROM Questions WHERE question_id=" + std::to_string(questionId) + ";";
+            db->executeUpdate(deleteQ);
+            std::cerr << "[ADD_TO_QUIZ_FROM_BANK] Deleted question " << questionId 
+                      << " due to missing answers" << std::endl;
+            sendLine(sock, "ADD_TO_QUIZ_FROM_BANK_FAIL|reason=question_has_no_answers");
+            return;
+        }
+        
+        std::cout << "[ADD_TO_QUIZ_FROM_BANK] Copied " << answerCount 
+                  << " answers from bank to question " << questionId << std::endl;
 
         sendLine(sock, "ADD_TO_QUIZ_FROM_BANK_OK|questionId=" + std::to_string(questionId));
         std::cout << "[ADD_TO_QUIZ_FROM_BANK] question " << bankQId 
