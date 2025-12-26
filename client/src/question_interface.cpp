@@ -6,170 +6,248 @@
 #include <cctype>
 #include <sys/select.h>
 #include <unistd.h>
+#include <vector>
+
+// Helper function to display current question
+void displayQuestion(int currentIndex, int totalQuestions, int currentQuestionId,
+                     const std::string& questionText, 
+                     const std::string& optA, const std::string& optB,
+                     const std::string& optC, const std::string& optD,
+                     const std::string& previousAnswer,
+                     const std::vector<bool>& answeredQuestions) {
+    std::cout << "\n===================================\n";
+    std::cout << "  Question " << (currentIndex + 1) << " / " << totalQuestions << "\n";
+    std::cout << "===================================\n";
+    std::cout << questionText << std::endl;
+    std::cout << "-----------------------------------\n";
+    std::cout << "A. " << optA << std::endl;
+    std::cout << "B. " << optB << std::endl;
+    std::cout << "C. " << optC << std::endl;
+    std::cout << "D. " << optD << std::endl;
+    
+    if (!previousAnswer.empty()) {
+        std::string prevChoice = "";
+        if (previousAnswer == optA) prevChoice = "A";
+        else if (previousAnswer == optB) prevChoice = "B";
+        else if (previousAnswer == optC) prevChoice = "C";
+        else if (previousAnswer == optD) prevChoice = "D";
+        if (!prevChoice.empty()) {
+            std::cout << "[Your current answer: " << prevChoice << "]\n";
+        }
+    }
+    
+    int answeredCount = 0;
+    for (bool a : answeredQuestions) if (a) answeredCount++;
+    std::cout << "-----------------------------------\n";
+    std::cout << "Progress: " << answeredCount << "/" << totalQuestions << " answered\n";
+    std::cout << "[N]ext [P]rev [G#]Go to [S]ubmit\n";
+    std::cout << "Your choice (A/B/C/D/N/P/G#/S): ";
+    std::cout.flush();
+}
  
-void enterExamRoom(int sock, const std::string& roomId) {
+void enterExamRoom(int sock, const std::string& roomId, int totalQuestions) {
     std::cout << "\n[ROOM " << roomId << "] Joined successfully.\n";
-    std::cout << "Waiting for exam to start...\n";
+    std::cout << "Total questions: " << totalQuestions << "\n";
+    std::cout << "\n=== NAVIGATION INSTRUCTIONS ===\n";
+    std::cout << "  A/B/C/D  - Answer the question\n";
+    std::cout << "  N        - Next question\n";
+    std::cout << "  P        - Previous question\n";
+    std::cout << "  G<num>   - Go to question (e.g., G5 for question 5)\n";
+    std::cout << "  S        - Submit exam\n";
+    std::cout << "================================\n";
  
-    bool examStarted = false;
+    int currentIndex = 0;
+    int currentQuestionId = 0;
+    std::string currentQuestionText, optA, optB, optC, optD, currentPrevAnswer;
+    std::vector<bool> answeredQuestions(totalQuestions, false);
+    bool waitingForQuestion = true; // Start by waiting for first question
     
     while (true) {
-        std::string msg = recvLine(sock);
-        if (msg.empty()) {
-            std::cout << "[DEBUG] Received empty message, connection closed?\n";
-            return;
+        fd_set readfds;
+        struct timeval timeout;
+        FD_ZERO(&readfds);
+        FD_SET(sock, &readfds);
+        if (!waitingForQuestion) {
+            FD_SET(0, &readfds); // Only check stdin when we have a question displayed
         }
- 
-        // Debug: show received message
-        std::cout << "[DEBUG CLIENT] Received: " << msg << std::endl;
- 
-        auto parts = split(msg, '|');
-        if (parts.empty()) continue;
- 
-        std::string cmd = parts[0];
- 
-        if (cmd == "TEST_STARTED") {
-            std::cout << "\n>>> EXAM STARTED! <<<\n";
-            if (parts.size() > 1) {
-                int timeLimitSeconds = std::stoi(parts[1]);
-                int minutes = timeLimitSeconds / 60;
-                int seconds = timeLimitSeconds % 60;
-                std::cout << "Time limit: " << minutes << " minutes";
-                if (seconds > 0) std::cout << " " << seconds << " seconds";
-                std::cout << std::endl;
-            }
-            if (parts.size() > 2) {
-                std::string examType = parts[2];
-                if (examType == "scheduled") {
-                    std::cout << "[Scheduled Exam] Thời gian làm bài có thể bị giới hạn bởi thời gian kết thúc bài thi.\n";
+        
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 100000; // 100ms
+        
+        int maxfd = (sock > 0) ? sock : 0;
+        int result = select(maxfd + 1, &readfds, NULL, NULL, &timeout);
+        
+        if (result > 0) {
+            // Check socket for server messages
+            if (FD_ISSET(sock, &readfds)) {
+                std::string msg = recvLine(sock);
+                if (msg.empty()) {
+                    std::cout << "\n[Connection closed]\n";
+                    return;
                 }
-            }
-            examStarted = true;
-            // Continue to process next message (first question)
-            continue;
-        } else if (cmd == "QUESTION") {
-            if (parts.size() < 7) {
-                // Invalid question format, skip
-                continue;
-            }
-            std::cout << "\n-----------------------------------\n";
-            std::cout << "Question: " << parts[2] << std::endl;
-            std::cout << "A. " << parts[3] << std::endl;
-            std::cout << "B. " << parts[4] << std::endl;
-            std::cout << "C. " << parts[5] << std::endl;
-            std::cout << "D. " << parts[6] << std::endl;
-            
-            std::string ans;
-            std::cout << "Your answer (A/B/C/D): ";
-            std::cout.flush();
-            
-            // Use select() to check both socket and stdin simultaneously
-            // This allows us to receive END_EXAM even while waiting for user input
-            bool gotAnswer = false;
-            while (!gotAnswer) {
-                fd_set readfds;
-                struct timeval timeout;
-                FD_ZERO(&readfds);
-                FD_SET(sock, &readfds);  // Check socket for server messages
-                FD_SET(0, &readfds);    // Check stdin for user input
                 
-                timeout.tv_sec = 0;
-                timeout.tv_usec = 100000; // 0.1 second timeout
+                auto parts = split(msg, '|');
+                if (parts.empty()) continue;
                 
-                int maxfd = (sock > 0) ? sock : 0;
-                int result = select(maxfd + 1, &readfds, NULL, NULL, &timeout);
+                std::string cmd = parts[0];
                 
-                if (result > 0) {
-                    // Check socket first (server messages have priority)
-                    if (FD_ISSET(sock, &readfds)) {
-                        std::string serverMsg = recvLine(sock);
-                        if (!serverMsg.empty()) {
-                            std::cout << "\n[DEBUG CLIENT] Received while waiting for input: " << serverMsg << std::endl;
-                            // Process the message - might be END_EXAM
-                            auto serverParts = split(serverMsg, '|');
-                            if (!serverParts.empty() && serverParts[0] == "END_EXAM") {
-                                // Exam ended, show results
-                                std::cout << "\n===================================\n";
-                                std::cout << "           EXAM FINISHED           \n";
-                                std::cout << "===================================\n";
-                                if (serverParts.size() >= 2) {
-                                    std::cout << "\nYour Score: " << serverParts[1] << std::endl;
-                                }
-                                if (serverParts.size() >= 3) {
-                                    std::cout << "Correct Answers: " << serverParts[2] << std::endl;
-                                }
-                                std::cout << "\nPress Enter to return to menu...";
-                                std::cin.ignore();
-                                std::cin.get();
-                                return; // Exit exam room
-                            }
-                            // If not END_EXAM, it's probably the next question or ANSWER_FAIL
-                            // We've already read it, so we need to process it in the main loop
-                            // But we can't easily "unread" it, so we'll lose it
-                            // For now, just break and let main loop handle the next message
-                            // Note: This means we might lose one message, but it's rare
-                            // and the main loop will continue normally
-                            break; // Exit input loop, main loop will process next message
-                        }
+                if (cmd == "QUESTION") {
+                    // Format: QUESTION|qId|text|A|B|C|D|currentIndex|totalQuestions|previousAnswer
+                    if (parts.size() < 7) continue;
+                    
+                    currentQuestionId = std::stoi(parts[1]);
+                    currentQuestionText = parts[2];
+                    optA = parts[3];
+                    optB = parts[4];
+                    optC = parts[5];
+                    optD = parts[6];
+                    
+                    if (parts.size() >= 9) {
+                        currentIndex = std::stoi(parts[7]);
                     }
                     
-                    // Check stdin for user input
-                    if (FD_ISSET(0, &readfds)) {
-                        char ch;
-                        std::cin >> ch;
-                        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-                        
-                        ans = toupper(ch);
-                        
-                        // Validate answer input
-                        if (ans == "A" || ans == "B" || ans == "C" || ans == "D") {
-                            gotAnswer = true;
-                        } else {
-                            std::cout << "Invalid choice! Please enter A, B, C, or D: ";
-                            std::cout.flush();
-                        }
+                    currentPrevAnswer = "";
+                    if (parts.size() >= 10 && !parts[9].empty()) {
+                        currentPrevAnswer = parts[9];
+                        answeredQuestions[currentIndex] = true;
                     }
+                    
+                    displayQuestion(currentIndex, totalQuestions, currentQuestionId,
+                                    currentQuestionText, optA, optB, optC, optD,
+                                    currentPrevAnswer, answeredQuestions);
+                    waitingForQuestion = false;
+                    
+                } else if (cmd == "SAVE_ANSWER_OK") {
+                    std::cout << "[Answer saved]\n";
+                    std::cout << "Your choice (A/B/C/D/N/P/G#/S): ";
+                    std::cout.flush();
+                    
+                } else if (cmd == "SAVE_ANSWER_FAIL" || cmd == "GO_TO_QUESTION_FAIL") {
+                    std::string reason = parts.size() > 1 ? parts[1] : "unknown_error";
+                    std::cout << "\n[ERROR] " << reason << "\n";
+                    std::cout << "Your choice (A/B/C/D/N/P/G#/S): ";
+                    std::cout.flush();
+                    
+                } else if (cmd == "END_EXAM") {
+                    std::cout << "\n===================================\n";
+                    std::cout << "           EXAM FINISHED           \n";
+                    std::cout << "===================================\n";
+                    if (parts.size() >= 2) {
+                        std::cout << "\nYour Score: " << parts[1] << std::endl;
+                    }
+                    if (parts.size() >= 3) {
+                        std::cout << "Correct Answers: " << parts[2] << std::endl;
+                    }
+                    std::cout << "\nPress Enter to return to menu...";
+                    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+                    return;
+                    
+                } else {
+                    std::cout << "\n[Server] " << msg << std::endl;
                 }
             }
             
-            // If we got an answer, send it
-            if (gotAnswer) {
-                std::string answerMsg = "ANSWER|" + parts[1] + "|" + ans;
-                sendLine(sock, answerMsg);
-                std::cout << "[DEBUG CLIENT] Sent: " << answerMsg << std::endl;
-                std::cout << "[DEBUG CLIENT] Waiting for next message from server..." << std::endl;
+            // Check stdin for user input (only when not waiting for question)
+            if (!waitingForQuestion && FD_ISSET(0, &readfds)) {
+                std::string input;
+                std::cin >> input;
+                std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+                
+                if (input.empty()) continue;
+                
+                char firstChar = toupper(input[0]);
+                std::cout << "[DEBUG] Input received: '" << input << "', firstChar='" << firstChar << "'\n";
+                
+                if (firstChar == 'A' || firstChar == 'B' || 
+                    firstChar == 'C' || firstChar == 'D') {
+                    // Save answer (don't wait for response here, handle it in socket check)
+                    std::string saveMsg = "SAVE_ANSWER|" + std::to_string(currentQuestionId) + "|" + firstChar;
+                    std::cout << "[DEBUG] Sending: " << saveMsg << "\n";
+                    sendLine(sock, saveMsg);
+                    answeredQuestions[currentIndex] = true;
+                    // Update local previous answer display
+                    if (firstChar == 'A') currentPrevAnswer = optA;
+                    else if (firstChar == 'B') currentPrevAnswer = optB;
+                    else if (firstChar == 'C') currentPrevAnswer = optC;
+                    else if (firstChar == 'D') currentPrevAnswer = optD;
+                    
+                } else if (firstChar == 'N') {
+                    if (currentIndex < totalQuestions - 1) {
+                        std::string goMsg = "GO_TO_QUESTION|" + std::to_string(currentIndex + 1);
+                        std::cout << "[DEBUG] Sending: " << goMsg << "\n";
+                        sendLine(sock, goMsg);
+                        waitingForQuestion = true;
+                    } else {
+                        std::cout << "[Already at last question]\n";
+                        std::cout << "Your choice (A/B/C/D/N/P/G#/S): ";
+                        std::cout.flush();
+                    }
+                    
+                } else if (firstChar == 'P') {
+                    if (currentIndex > 0) {
+                        sendLine(sock, "GO_TO_QUESTION|" + std::to_string(currentIndex - 1));
+                        waitingForQuestion = true;
+                    } else {
+                        std::cout << "[Already at first question]\n";
+                        std::cout << "Your choice (A/B/C/D/N/P/G#/S): ";
+                        std::cout.flush();
+                    }
+                    
+                } else if (firstChar == 'G') {
+                    if (input.length() > 1) {
+                        try {
+                            int targetQ = std::stoi(input.substr(1));
+                            if (targetQ >= 1 && targetQ <= totalQuestions) {
+                                sendLine(sock, "GO_TO_QUESTION|" + std::to_string(targetQ - 1));
+                                waitingForQuestion = true;
+                            } else {
+                                std::cout << "[Invalid question number. Enter 1-" << totalQuestions << "]\n";
+                                std::cout << "Your choice (A/B/C/D/N/P/G#/S): ";
+                                std::cout.flush();
+                            }
+                        } catch (...) {
+                            std::cout << "[Invalid input. Use G followed by number (e.g., G5)]\n";
+                            std::cout << "Your choice (A/B/C/D/N/P/G#/S): ";
+                            std::cout.flush();
+                        }
+                    } else {
+                        std::cout << "[Enter question number after G (e.g., G5)]\n";
+                        std::cout << "Your choice (A/B/C/D/N/P/G#/S): ";
+                        std::cout.flush();
+                    }
+                    
+                } else if (firstChar == 'S') {
+                    int answeredCount = 0;
+                    for (bool a : answeredQuestions) if (a) answeredCount++;
+                    
+                    std::cout << "\n=== CONFIRM SUBMISSION ===\n";
+                    std::cout << "Answered: " << answeredCount << "/" << totalQuestions << "\n";
+                    if (answeredCount < totalQuestions) {
+                        std::cout << "WARNING: You have " << (totalQuestions - answeredCount) 
+                                  << " unanswered questions!\n";
+                    }
+                    std::cout << "Are you sure you want to submit? (Y/N): ";
+                    std::cout.flush();
+                    
+                    char confirm;
+                    std::cin >> confirm;
+                    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+                    
+                    if (toupper(confirm) == 'Y') {
+                        sendLine(sock, "SUBMIT_EXAM_NOW");
+                        waitingForQuestion = true; // Wait for END_EXAM
+                    } else {
+                        std::cout << "[Submission cancelled]\n";
+                        std::cout << "Your choice (A/B/C/D/N/P/G#/S): ";
+                        std::cout.flush();
+                    }
+                    
+                } else {
+                    std::cout << "[Invalid choice]\n";
+                    std::cout << "Your choice (A/B/C/D/N/P/G#/S): ";
+                    std::cout.flush();
+                }
             }
-            
-            // Continue to wait for next message (QUESTION, END_EXAM, or ANSWER_FAIL)
-            continue;
- 
-        } else if (cmd == "ANSWER_FAIL") {
-            std::string reason = parts.size() > 1 ? parts[1] : "unknown_error";
-            std::cout << "\n[ERROR] Failed to submit answer: " << reason << std::endl;
-            std::cout << "Please try again or contact administrator.\n";
-            // Continue to wait for next message
-            continue;
- 
-        } else if (cmd == "END_EXAM") {
-            std::cout << "\n===================================\n";
-            std::cout << "           EXAM FINISHED           \n";
-            std::cout << "===================================\n";
-            if (parts.size() >= 2) {
-                std::cout << "\nYour Score: " << parts[1] << std::endl;
-            }
-            if (parts.size() >= 3) {
-                std::cout << "Correct Answers: " << parts[2] << std::endl;
-            }
-            std::cout << "\nPress Enter to return to menu...";
-            std::cin.ignore();
-            std::cin.get();
-            break;
-        } else if (!examStarted) {
-            // Before exam starts, show server messages
-            std::cout << "Server: " << msg << std::endl;
-        } else {
-            // During exam, show any other server messages (for debugging)
-            std::cout << "Server: " << msg << std::endl;
         }
     }
 }
@@ -202,8 +280,11 @@ void studentMenu(int sock) {
             if (parts.size() > 0 && parts[0] == "TEST_STARTED") {
                 // Display exam info before entering exam room
                 std::cout << "\n>>> EXAM STARTED! <<<\n";
+                int timeLimitSeconds = 0;
+                int totalQuestions = 0;
+                
                 if (parts.size() > 1) {
-                    int timeLimitSeconds = std::stoi(parts[1]);
+                    timeLimitSeconds = std::stoi(parts[1]);
                     int minutes = timeLimitSeconds / 60;
                     int seconds = timeLimitSeconds % 60;
                     std::cout << "Time limit: " << minutes << " minutes";
@@ -216,7 +297,11 @@ void studentMenu(int sock) {
                         std::cout << "[Scheduled Exam] Thời gian làm bài có thể bị giới hạn bởi thời gian kết thúc bài thi.\n";
                     }
                 }
-                enterExamRoom(sock, std::to_string(quizId));
+                if (parts.size() > 3) {
+                    totalQuestions = std::stoi(parts[3]);
+                }
+                
+                enterExamRoom(sock, std::to_string(quizId), totalQuestions);
             } else if (parts.size() > 0 && parts[0] == "JOIN_FAIL") {
                 std::cout << "Failed to join: " << resp << std::endl;
                 // Show more details for scheduled exam errors
@@ -252,4 +337,3 @@ void studentMenu(int sock) {
         }
     }
 }
- 

@@ -140,6 +140,10 @@ bool handleRegister(int clientSock, DbManager *db, const std::vector<std::string
 // ==================================================
 // STUDENT EXAM HANDLERS
 // ==================================================
+
+// Forward declarations
+void sendQuestionWithInfo(int sock, int questionId, int currentIndex, int totalQuestions,
+                          int examId, DbManager* db);
  
 // Helper: Send a question to client
 // Format: QUESTION|qId|text|A|B|C|D
@@ -325,12 +329,12 @@ void handleJoinRoom(const std::vector<std::string>& parts, int sock,
         clientInfo->currentQuestionIndex = 0;
         clientInfo->questionIds = questionIds;
         
-        // Send TEST_STARTED with time limit (in seconds for more precision)
-        // Client will receive actual available time
-        sendLine(sock, "TEST_STARTED|" + std::to_string(actualTimeLimit) + "|" + examType);
+        // Send TEST_STARTED with time limit and total question count
+        // Format: TEST_STARTED|timeLimit|examType|totalQuestions
+        sendLine(sock, "TEST_STARTED|" + std::to_string(actualTimeLimit) + "|" + examType + "|" + std::to_string(questionIds.size()));
         
-        // Send first question
-        sendQuestion(sock, questionIds[0], db);
+        // Send first question with navigation info
+        sendQuestionWithInfo(sock, questionIds[0], 0, questionIds.size(), examId, db);
         
         std::cout << "[JOIN_ROOM] Student " << clientInfo->userId
                   << " joined quiz " << quizId << ", examId=" << examId << std::endl;
@@ -542,6 +546,257 @@ void handleAnswer(const std::vector<std::string>& parts, int sock,
     } catch (std::exception& e) {
         std::cerr << "[ANSWER] Exception: " << e.what() << std::endl;
         sendLine(sock, "ANSWER_FAIL|reason=unknown_error");
+    }
+}
+
+// GO_TO_QUESTION|questionIndex (0-based index)
+// Cho phép học sinh chuyển đến câu hỏi bất kỳ
+void handleGoToQuestion(const std::vector<std::string>& parts, int sock,
+                        DbManager* db, ClientManager& clientMgr) {
+    std::cout << "[GO_TO_QUESTION] Received from client " << sock << std::endl;
+    
+    if (parts.size() != 2) {
+        sendLine(sock, "GO_TO_QUESTION_FAIL|reason=bad_format");
+        return;
+    }
+    
+    ClientInfo* clientInfo = clientMgr.getClient(sock);
+    if (!clientInfo || clientInfo->role != "student") {
+        sendLine(sock, "GO_TO_QUESTION_FAIL|reason=permission_denied");
+        return;
+    }
+    
+    if (clientInfo->currentExamId == 0) {
+        sendLine(sock, "GO_TO_QUESTION_FAIL|reason=no_active_exam");
+        return;
+    }
+    
+    int questionIndex;
+    try {
+        questionIndex = std::stoi(parts[1]);
+    } catch (...) {
+        sendLine(sock, "GO_TO_QUESTION_FAIL|reason=bad_number");
+        return;
+    }
+    
+    // Validate question index
+    if (questionIndex < 0 || static_cast<size_t>(questionIndex) >= clientInfo->questionIds.size()) {
+        sendLine(sock, "GO_TO_QUESTION_FAIL|reason=invalid_question_index");
+        return;
+    }
+    
+    // Update current question index
+    clientInfo->currentQuestionIndex = questionIndex;
+    int questionId = clientInfo->questionIds[questionIndex];
+    
+    std::cout << "[GO_TO_QUESTION] Sending question " << questionId 
+              << " (index " << questionIndex << ") to client " << sock << std::endl;
+    
+    // Send the question with additional info: current index, total questions
+    sendQuestionWithInfo(sock, questionId, questionIndex, clientInfo->questionIds.size(), 
+                         clientInfo->currentExamId, db);
+}
+
+// Send question with navigation info
+void sendQuestionWithInfo(int sock, int questionId, int currentIndex, int totalQuestions,
+                          int examId, DbManager* db) {
+    try {
+        // Get question
+        std::string qSql =
+            "SELECT question_text FROM Questions WHERE question_id = " +
+            std::to_string(questionId) + ";";
+        
+        sql::ResultSet* qRes = db->executeQuery(qSql);
+        if (!qRes || !qRes->next()) {
+            delete qRes;
+            sendLine(sock, "QUESTION_FAIL|reason=question_not_found");
+            return;
+        }
+        
+        std::string questionText = qRes->getString("question_text");
+        delete qRes;
+        
+        // Get answers
+        std::string aSql =
+            "SELECT answer_text FROM Answers "
+            "WHERE question_id = " + std::to_string(questionId) +
+            " ORDER BY answer_id LIMIT 4;";
+        
+        sql::ResultSet* aRes = db->executeQuery(aSql);
+        std::vector<std::string> answers;
+        while (aRes && aRes->next() && answers.size() < 4) {
+            answers.push_back(aRes->getString("answer_text"));
+        }
+        delete aRes;
+        
+        while (answers.size() < 4) {
+            answers.push_back("");
+        }
+        
+        // Check if student has already answered this question
+        std::string checkAnswerSql =
+            "SELECT chosen_answer FROM Exam_Answers "
+            "WHERE exam_id = " + std::to_string(examId) +
+            " AND question_id = " + std::to_string(questionId) + ";";
+        
+        sql::ResultSet* checkRes = db->executeQuery(checkAnswerSql);
+        std::string previousAnswer = "";
+        if (checkRes && checkRes->next()) {
+            previousAnswer = checkRes->getString("chosen_answer");
+        }
+        delete checkRes;
+        
+        // QUESTION|qId|text|A|B|C|D|currentIndex|totalQuestions|previousAnswer
+        std::stringstream ss;
+        ss << "QUESTION|" << questionId << "|" << questionText << "|"
+           << answers[0] << "|" << answers[1] << "|"
+           << answers[2] << "|" << answers[3] << "|"
+           << currentIndex << "|" << totalQuestions << "|" << previousAnswer;
+        
+        sendLine(sock, ss.str());
+        std::cout << "[SEND_QUESTION_INFO] Sent question " << questionId 
+                  << " (" << (currentIndex + 1) << "/" << totalQuestions << ") to client " << sock << std::endl;
+        
+    } catch (sql::SQLException& e) {
+        std::cerr << "[SEND_QUESTION_INFO] SQL error: " << e.what() << std::endl;
+        sendLine(sock, "QUESTION_FAIL|reason=sql_error");
+    }
+}
+
+// SUBMIT_EXAM_NOW - Học sinh tự nộp bài
+void handleSubmitExamNow(int sock, DbManager* db, ClientManager& clientMgr) {
+    std::cout << "[SUBMIT_EXAM_NOW] Received from client " << sock << std::endl;
+    
+    ClientInfo* clientInfo = clientMgr.getClient(sock);
+    if (!clientInfo || clientInfo->role != "student") {
+        sendLine(sock, "SUBMIT_EXAM_FAIL|reason=permission_denied");
+        return;
+    }
+    
+    if (clientInfo->currentExamId == 0) {
+        sendLine(sock, "SUBMIT_EXAM_FAIL|reason=no_active_exam");
+        return;
+    }
+    
+    int examId = clientInfo->currentExamId;
+    
+    // Submit the exam
+    submitExam(examId, db);
+    
+    // Get score
+    std::string getScoreSql =
+        "SELECT score FROM Exams WHERE exam_id = " + std::to_string(examId) + ";";
+    
+    sql::ResultSet* scoreRes = db->executeQuery(getScoreSql);
+    double score = 0.0;
+    int correctCount = 0;
+    if (scoreRes && scoreRes->next()) {
+        score = scoreRes->getDouble("score");
+        if (score > 0 && clientInfo->questionIds.size() > 0) {
+            correctCount = int((score / 10.0) * clientInfo->questionIds.size() + 0.5);
+        }
+    }
+    delete scoreRes;
+    
+    // Reset exam state
+    clientInfo->currentExamId = 0;
+    clientInfo->currentQuestionIndex = 0;
+    clientInfo->questionIds.clear();
+    
+    // Send END_EXAM
+    std::stringstream ss;
+    ss << "END_EXAM|" << score << "|" << correctCount;
+    sendLine(sock, ss.str());
+    
+    std::cout << "[SUBMIT_EXAM_NOW] Exam " << examId 
+              << " submitted by student, score = " << score << std::endl;
+}
+
+// SAVE_ANSWER|qId|choice - Lưu câu trả lời mà không chuyển câu
+void handleSaveAnswer(const std::vector<std::string>& parts, int sock,
+                      DbManager* db, ClientManager& clientMgr) {
+    std::cout << "[SAVE_ANSWER] Received from client " << sock << std::endl;
+    
+    if (parts.size() != 3) {
+        sendLine(sock, "SAVE_ANSWER_FAIL|reason=bad_format");
+        return;
+    }
+    
+    ClientInfo* clientInfo = clientMgr.getClient(sock);
+    if (!clientInfo || clientInfo->role != "student") {
+        sendLine(sock, "SAVE_ANSWER_FAIL|reason=permission_denied");
+        return;
+    }
+    
+    if (clientInfo->currentExamId == 0) {
+        sendLine(sock, "SAVE_ANSWER_FAIL|reason=no_active_exam");
+        return;
+    }
+    
+    int questionId;
+    try {
+        questionId = std::stoi(parts[1]);
+    } catch (...) {
+        sendLine(sock, "SAVE_ANSWER_FAIL|reason=bad_question_id");
+        return;
+    }
+    
+    std::string choice = parts[2];
+    
+    try {
+        int answerIndex = 0;
+        if (choice == "A" || choice == "a") answerIndex = 1;
+        else if (choice == "B" || choice == "b") answerIndex = 2;
+        else if (choice == "C" || choice == "c") answerIndex = 3;
+        else if (choice == "D" || choice == "d") answerIndex = 4;
+        else {
+            sendLine(sock, "SAVE_ANSWER_FAIL|reason=invalid_choice");
+            return;
+        }
+        
+        // Get answers for this question
+        std::string getAnswerSql =
+            "SELECT answer_id, answer_text FROM Answers "
+            "WHERE question_id = " + std::to_string(questionId) +
+            " ORDER BY answer_id LIMIT 4;";
+        
+        sql::ResultSet* answerRes = db->executeQuery(getAnswerSql);
+        std::vector<std::pair<int, std::string>> answers;
+        while (answerRes && answerRes->next()) {
+            answers.push_back({answerRes->getInt("answer_id"), 
+                               answerRes->getString("answer_text")});
+        }
+        delete answerRes;
+        
+        if (answerIndex < 1 || static_cast<size_t>(answerIndex) > answers.size()) {
+            sendLine(sock, "SAVE_ANSWER_FAIL|reason=answer_not_found");
+            return;
+        }
+        
+        int answerId = answers[answerIndex - 1].first;
+        std::string answerText = answers[answerIndex - 1].second;
+        
+        // Delete old answer and insert new
+        std::string deleteSql =
+            "DELETE FROM Exam_Answers "
+            "WHERE exam_id = " + std::to_string(clientInfo->currentExamId) +
+            " AND question_id = " + std::to_string(questionId) + ";";
+        db->executeUpdate(deleteSql);
+        
+        std::string insertSql =
+            "INSERT INTO Exam_Answers (exam_id, question_id, answer_id, chosen_answer) "
+            "VALUES (" + std::to_string(clientInfo->currentExamId) + ", " +
+            std::to_string(questionId) + ", " + std::to_string(answerId) + ", '" +
+            escapeSql(answerText) + "');";
+        db->executeUpdate(insertSql);
+        
+        sendLine(sock, "SAVE_ANSWER_OK");
+        std::cout << "[SAVE_ANSWER] Saved answer for question " << questionId 
+                  << ", choice=" << choice << std::endl;
+        
+    } catch (sql::SQLException& e) {
+        std::cerr << "[SAVE_ANSWER] SQL error: " << e.what() << std::endl;
+        sendLine(sock, "SAVE_ANSWER_FAIL|reason=sql_error");
     }
 }
  
@@ -782,6 +1037,15 @@ void handleCommand(int clientSock, const std::vector<std::string>& parts,
         
     } else if (cmd == "ANSWER") {
         handleAnswer(parts, clientSock, db, clientMgr);
+        
+    } else if (cmd == "GO_TO_QUESTION") {
+        handleGoToQuestion(parts, clientSock, db, clientMgr);
+        
+    } else if (cmd == "SAVE_ANSWER") {
+        handleSaveAnswer(parts, clientSock, db, clientMgr);
+        
+    } else if (cmd == "SUBMIT_EXAM_NOW") {
+        handleSubmitExamNow(clientSock, db, clientMgr);
         
     } else if (cmd == "LIST_MY_HISTORY") {
         handleListMyHistory(clientSock, db, clientMgr);

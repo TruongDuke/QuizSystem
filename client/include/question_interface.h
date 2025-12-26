@@ -6,8 +6,8 @@
 // Student menu
 void studentMenu(int sock);
 
-// Exam room flow
-void enterExamRoom(int sock, const std::string& roomId);
+// Enter exam room with navigation support
+void enterExamRoom(int sock, const std::string& roomId, int totalQuestions);
 
 #endif // QUESTION_INTERFACE_H
 
