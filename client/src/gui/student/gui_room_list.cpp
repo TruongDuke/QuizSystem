@@ -1,6 +1,6 @@
-#include "../../include/gui/gui_room_list.h"
-#include "../../include/gui/gui_history.h"
-#include "../../include/client.h"
+#include "../../../include/gui/student/gui_room_list.h"
+#include "../../../include/gui/student/gui_history.h"
+#include "../../../include/client.h"
 #include <iostream>
 #include <sstream>
 

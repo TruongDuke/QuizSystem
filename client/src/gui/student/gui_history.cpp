@@ -1,5 +1,5 @@
-#include "../../include/gui/gui_history.h"
-#include "../../include/client.h"
+#include "../../../include/gui/student/gui_history.h"
+#include "../../../include/client.h"
 #include <iostream>
 #include <vector>
 

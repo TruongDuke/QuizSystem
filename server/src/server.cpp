@@ -951,6 +951,12 @@ void handleCommand(int clientSock, const std::vector<std::string>& parts,
             handleDeleteQuestion(parts, clientSock, db);
         else
             sendLine(clientSock, "DELETE_QUESTION_FAIL|reason=permission_denied");
+    
+    } else if (cmd == "GET_ONE_QUESTION") {
+        if (role == "teacher")
+            handleGetOneQuestion(parts, clientSock, db);
+        else
+            sendLine(clientSock, "GET_ONE_QUESTION_FAIL|reason=permission_denied");
             
     } else if (cmd == "LIST_QUESTION_BANK") {
         if (role == "teacher")

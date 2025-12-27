@@ -2,9 +2,10 @@
 #include "../include/quiz_interface.h"
 #include "../include/question_interface.h"
 #include "../include/gui/gui_login.h"
-#include "../include/gui/gui_room_list.h"
-#include "../include/gui/gui_exam.h"
-#include "../include/gui/gui_history.h"
+#include "../include/gui/student/gui_room_list.h"
+#include "../include/gui/student/gui_exam.h"
+#include "../include/gui/student/gui_history.h"
+#include "../include/gui/teacher/gui_teacher_main.h"
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -104,7 +105,9 @@ int main(int argc, char** argv) {
         
         // Chuyển sang menu tương ứng
         if (role == "teacher") {
-            teacherMenu(sock);
+            // Hiển thị Teacher Dashboard GUI
+            std::cout << "Opening Teacher Dashboard...\n";
+            showTeacherDashboard(sock);
             close(sock);
             continue; // Quay lại màn hình login
         } else if (role == "student") {

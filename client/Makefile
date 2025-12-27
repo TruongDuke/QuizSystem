@@ -19,9 +19,14 @@ SOURCES_GUI = $(SRC_DIR)/client_gui.cpp \
               $(SRC_DIR)/quiz_interface.cpp \
               $(SRC_DIR)/question_interface.cpp \
               $(SRC_DIR)/gui/gui_login.cpp \
-              $(SRC_DIR)/gui/gui_room_list.cpp \
-              $(SRC_DIR)/gui/gui_exam.cpp \
-              $(SRC_DIR)/gui/gui_history.cpp
+              $(SRC_DIR)/gui/student/gui_room_list.cpp \
+              $(SRC_DIR)/gui/student/gui_exam.cpp \
+              $(SRC_DIR)/gui/student/gui_history.cpp \
+              $(SRC_DIR)/gui/teacher/gui_teacher_main.cpp \
+              $(SRC_DIR)/gui/teacher/gui_teacher_tab_quiz.cpp \
+              $(SRC_DIR)/gui/teacher/gui_teacher_tab_question.cpp \
+              $(SRC_DIR)/gui/teacher/gui_teacher_tab_bank.cpp \
+              $(SRC_DIR)/gui/teacher/gui_teacher_tab_results.cpp
 
 # Object files
 OBJECTS = $(SOURCES:$(SRC_DIR)/%.cpp=$(BUILD_DIR)/%.o)
@@ -51,7 +56,8 @@ gui: $(BUILD_DIR) $(TARGET_GUI)
 # Create build directory
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
-	mkdir -p $(BUILD_DIR)/gui
+	mkdir -p $(BUILD_DIR)/gui/student
+	mkdir -p $(BUILD_DIR)/gui/teacher
 
 # Link object files to create console executable
 $(TARGET): $(OBJECTS)
@@ -67,6 +73,12 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
 
 # Compile GUI source files with GTK flags
 $(BUILD_DIR)/gui/%.o: $(SRC_DIR)/gui/%.cpp
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(GTK_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/gui/student/%.o: $(SRC_DIR)/gui/student/%.cpp
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(GTK_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/gui/teacher/%.o: $(SRC_DIR)/gui/teacher/%.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) $(GTK_CFLAGS) -c $< -o $@
 
 # Special rule for client_gui.cpp

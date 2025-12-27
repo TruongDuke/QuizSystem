@@ -11,6 +11,7 @@ void handleListQuestions(const std::vector<std::string> &parts, int sock, DbMana
 void handleAddQuestion(const std::vector<std::string> &parts, int sock, DbManager *db);
 void handleEditQuestion(const std::vector<std::string> &parts, int sock, DbManager *db);
 void handleDeleteQuestion(const std::vector<std::string> &parts, int sock, DbManager *db);
+void handleGetOneQuestion(const std::vector<std::string> &parts, int sock, DbManager *db);
 
 // Question Bank operations
 void handleListQuestionBank(const std::vector<std::string> &parts, int sock, DbManager *db);

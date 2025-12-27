@@ -202,6 +202,70 @@ void handleDeleteQuestion(const std::vector<std::string> &parts, int sock, DbMan
     }
 }
 
+// GET_ONE_QUESTION|qId
+void handleGetOneQuestion(const std::vector<std::string> &parts, int sock, DbManager *db) {
+    if (parts.size() != 2) {
+        sendLine(sock, "GET_ONE_QUESTION_FAIL|reason=bad_format");
+        return;
+    }
+    int qid;
+    try {
+        qid = std::stoi(parts[1]);
+    } catch (...) {
+        sendLine(sock, "GET_ONE_QUESTION_FAIL|reason=bad_number");
+        return;
+    }
+
+    try {
+        std::string q = "SELECT question_id, question_text, difficulty, topic FROM Questions WHERE question_id=" + std::to_string(qid) + ";";
+        sql::ResultSet *res = db->executeQuery(q);
+        
+        if (!res || !res->next()) {
+            delete res;
+            sendLine(sock, "GET_ONE_QUESTION_FAIL|reason=not_found");
+            return;
+        }
+        
+        std::string content = res->getString("question_text");
+        std::string difficulty = res->getString("difficulty");
+        std::string topic = res->getString("topic");
+        delete res;
+        
+        // Get answers
+        std::string ans_q = "SELECT answer_text, is_correct FROM Answers WHERE question_id=" + std::to_string(qid) + " ORDER BY answer_id;";
+        res = db->executeQuery(ans_q);
+        
+        std::vector<std::string> options;
+        int correct_idx = 1;
+        int idx = 1;
+        
+        while (res && res->next()) {
+            options.push_back(res->getString("answer_text"));
+            if (res->getBoolean("is_correct")) {
+                correct_idx = idx;
+            }
+            idx++;
+        }
+        delete res;
+        
+        // Pad to 4 options
+        while (options.size() < 4) {
+            options.push_back("");
+        }
+        
+        // ONE_QUESTION|id|content|opt1|opt2|opt3|opt4|correctIdx|difficulty|topic
+        std::stringstream ss;
+        ss << "ONE_QUESTION|" << qid << "|" << content << "|"
+           << options[0] << "|" << options[1] << "|" << options[2] << "|" << options[3] << "|"
+           << correct_idx << "|" << difficulty << "|" << topic;
+        sendLine(sock, ss.str());
+        
+    } catch (sql::SQLException &e) {
+        std::cerr << "[GET_ONE_QUESTION] SQL error: " << e.what() << std::endl;
+        sendLine(sock, "GET_ONE_QUESTION_FAIL|reason=sql_error");
+    }
+}
+
 // ==================================================
 // QUESTION BANK
 // ==================================================
