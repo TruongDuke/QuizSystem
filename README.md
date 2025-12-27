@@ -314,3 +314,33 @@ Dự án học tập - Educational Project
 
 **Tác giả**: Quiz System Team  
 **Phiên bản**: 2.0 (với Async I/O & Real-time Communication)
+
+
+
+---
+
+## 🖥️ GUI Client (GTK+3)
+
+### Cài đặt GTK+3:
+```bash
+# Ubuntu/WSL2
+sudo apt update && sudo apt install libgtk-3-dev
+
+# macOS
+brew install gtk+3
+```
+
+### Build và chạy:
+```bash
+# Terminal 1: Server
+cd server && make && ./quiz_server
+
+# Terminal 2: GUI Client
+cd client && make gui && ./quiz_client_gui
+```
+
+**Tài khoản test**: `student1` / `student_password` hoặc đăng ký tài khoản học sinh, chưa phát triển phần giáo viên nên khi log in bằng giáo viên sẽ ra console
+
+**Chức năng**: Login/Register → Danh sách quiz → Làm bài thi → Xem lịch sử
+
+**Lưu ý**: Console client vẫn hoạt động (`make console`).

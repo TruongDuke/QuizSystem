@@ -39,7 +39,8 @@ bool hasData(int sock, int timeoutSeconds) {
     timeout.tv_sec = timeoutSeconds;
     timeout.tv_usec = 0;
     
-    int result = select(sock + 1, &readfds, NULL, NULL, timeoutSeconds > 0 ? &timeout : NULL);
+    // Always pass timeout pointer, even when 0 (immediate return, non-blocking)
+    int result = select(sock + 1, &readfds, NULL, NULL, &timeout);
     return result > 0 && FD_ISSET(sock, &readfds);
 }
 
