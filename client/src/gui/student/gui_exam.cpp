@@ -14,6 +14,9 @@ struct Question
     std::string optA, optB, optC, optD;
     std::string selectedAnswer; // "A", "B", "C", "D" or ""
     bool answered;
+    
+    // Constructor để khởi tạo mặc định
+    Question() : id(0), text(""), optA(""), optB(""), optC(""), optD(""), selectedAnswer(""), answered(false) {}
 };
 
 // Exam window data
@@ -284,7 +287,21 @@ static void request_question(ExamData *data, int index)
 // Update GUI display
 static void update_display(ExamData *data)
 {
+    // Kiểm tra bounds
+    if (data->currentIndex < 0 || data->currentIndex >= (int)data->questions.size())
+    {
+        std::cerr << "[ERROR] Invalid currentIndex: " << data->currentIndex << std::endl;
+        return;
+    }
+    
     Question &q = data->questions[data->currentIndex];
+    
+    // Kiểm tra nếu câu hỏi chưa được load
+    if (q.text.empty())
+    {
+        std::cerr << "[WARNING] Question " << data->currentIndex << " chưa có dữ liệu\n";
+        return;
+    }
 
     // Update question text
     std::stringstream ss;
@@ -368,8 +385,12 @@ static gboolean check_server_response(gpointer user_data)
     if (cmd == "QUESTION")
     {
         // Format: QUESTION|qId|text|A|B|C|D|currentIndex|totalQuestions|previousAnswer
+        std::cout << "[DEBUG] QUESTION parts.size() = " << parts.size() << std::endl;
         if (parts.size() < 7)
+        {
+            std::cerr << "[ERROR] QUESTION response thiếu dữ liệu\n";
             return TRUE;
+        }
 
         int qid = std::stoi(parts[1]);
         std::string text = parts[2];
