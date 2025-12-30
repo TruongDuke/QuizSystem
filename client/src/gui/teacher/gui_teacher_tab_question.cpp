@@ -268,6 +268,22 @@ static void on_question_add_clicked(GtkWidget *widget, gpointer user_data) {
             
             if (resp.find("ADD_QUESTION_OK") == 0) {
                 load_questions_for_quiz(data, data->current_quiz_id);
+            } else if (resp.find("quota_exceeded") != std::string::npos) {
+                // Parse error message: ADD_QUESTION_FAIL|reason=quota_exceeded|current=2|max=2
+                size_t currentPos = resp.find("current=");
+                size_t maxPos = resp.find("max=");
+                std::string errorMsg = "Không thể thêm! Bài thi đã đủ số câu hỏi.";
+                if (currentPos != std::string::npos && maxPos != std::string::npos) {
+                    std::string currentStr = resp.substr(currentPos + 8);
+                    std::string maxStr = resp.substr(maxPos + 4);
+                    size_t pipePos = currentStr.find('|');
+                    if (pipePos != std::string::npos) currentStr = currentStr.substr(0, pipePos);
+                    errorMsg = "Không thể thêm! Bài thi đã có " + currentStr + "/" + maxStr + " câu hỏi.";
+                }
+                GtkWidget *err = gtk_message_dialog_new(NULL, GTK_DIALOG_MODAL,
+                    GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, "%s", errorMsg.c_str());
+                gtk_dialog_run(GTK_DIALOG(err));
+                gtk_widget_destroy(err);
             } else {
                 GtkWidget *err = gtk_message_dialog_new(NULL, GTK_DIALOG_MODAL,
                     GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, "Thêm câu hỏi thất bại:\n%s", resp.c_str());

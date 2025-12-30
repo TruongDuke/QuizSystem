@@ -13,8 +13,12 @@
 
 // LIST_QUIZZES
 void handleListQuizzes(int sock, DbManager *db) {
+    // Auto-update scheduled quiz status first
+    updateScheduledQuizStatus(db);
+    
     std::string q =
-        "SELECT quiz_id, title, question_count, time_limit, status "
+        "SELECT quiz_id, title, question_count, time_limit, status, "
+        "exam_type, exam_start_time, exam_end_time "
         "FROM Quizzes;";
 
     try {
@@ -24,7 +28,7 @@ void handleListQuizzes(int sock, DbManager *db) {
             return;
         }
 
-        // format đơn giản: QUIZZES|id:title(count,time,status);id2:...
+        // format: QUIZZES|id:title(count,time,status,type,start,end);id2:...
         std::stringstream ss;
         ss << "QUIZZES|";
         bool first = true;
@@ -36,9 +40,13 @@ void handleListQuizzes(int sock, DbManager *db) {
             int cnt = res->getInt("question_count");
             int t = res->getInt("time_limit");
             std::string status = res->getString("status");
+            std::string examType = res->getString("exam_type");
+            std::string startTime = res->isNull("exam_start_time") ? "NULL" : res->getString("exam_start_time");
+            std::string endTime = res->isNull("exam_end_time") ? "NULL" : res->getString("exam_end_time");
 
             ss << id << ":" << title << "("
-               << cnt << "Q," << t << "s," << status << ")";
+               << cnt << "Q," << t << "s," << status << ","
+               << examType << "," << startTime << "," << endTime << ")";
         }
         delete res;
 
@@ -49,9 +57,9 @@ void handleListQuizzes(int sock, DbManager *db) {
     }
 }
 
-// ADD_QUIZ|title|desc|count|time|type|start_time|end_time
+// ADD_QUIZ|title|desc|count|time|type|delay_minutes
 // Format: ADD_QUIZ|title|desc|count|time (normal exam)
-//         ADD_QUIZ|title|desc|count|time|scheduled|start_time|end_time (scheduled exam)
+//         ADD_QUIZ|title|desc|count|time|scheduled|delay_minutes (scheduled exam)
 void handleAddQuiz(const std::vector<std::string> &parts, int sock, DbManager *db) {
     if (parts.size() < 5) {
         sendLine(sock, "ADD_QUIZ_FAIL|reason=bad_format");
@@ -74,17 +82,31 @@ void handleAddQuiz(const std::vector<std::string> &parts, int sock, DbManager *d
     std::string examType = "normal";
     std::string examStartTime = "NULL";
     std::string examEndTime = "NULL";
+    std::string defaultStatus = "in_progress"; // Normal quiz sẵn sàng thi ngay
     
     if (parts.size() >= 6) {
         examType = parts[5]; // "normal" hoặc "scheduled"
         
         if (examType == "scheduled") {
-            if (parts.size() < 8) {
+            if (parts.size() < 7) {
                 sendLine(sock, "ADD_QUIZ_FAIL|reason=missing_scheduled_time");
                 return;
             }
-            examStartTime = "'" + escapeSql(parts[6]) + "'"; // "2025-01-20 09:00:00"
-            examEndTime = "'" + escapeSql(parts[7]) + "'";   // "2025-01-20 12:00:00"
+            
+            try {
+                int delaySeconds = std::stoi(parts[6]);    // Số giây delay từ bây giờ
+                
+                // Tính toán start_time = NOW() + delay_seconds
+                // Tính toán end_time = start_time + timeLimit (đã có sẵn)
+                // timeLimit đang tính bằng giây
+                
+                examStartTime = "DATE_ADD(NOW(), INTERVAL " + std::to_string(delaySeconds) + " SECOND)";
+                examEndTime = "DATE_ADD(NOW(), INTERVAL " + std::to_string(delaySeconds + timeLimit) + " SECOND)";
+                defaultStatus = "not_started"; // Scheduled quiz chờ đến thời gian
+            } catch (...) {
+                sendLine(sock, "ADD_QUIZ_FAIL|reason=bad_schedule_number");
+                return;
+            }
         }
     }
 
@@ -93,7 +115,7 @@ void handleAddQuiz(const std::vector<std::string> &parts, int sock, DbManager *d
         "status, creator_id, exam_type, exam_start_time, exam_end_time) VALUES ('" +
         title + "', '" + desc + "', " +
         std::to_string(count) + ", " + std::to_string(timeLimit) +
-        ", 'not_started', 2, '" + examType + "', " +
+        ", '" + defaultStatus + "', 2, '" + examType + "', " +
         examStartTime + ", " + examEndTime + ");";
 
     std::cout << "[ADD_QUIZ] SQL: " << insertSql << std::endl;
@@ -107,9 +129,12 @@ void handleAddQuiz(const std::vector<std::string> &parts, int sock, DbManager *d
     std::cout << "[ADD_QUIZ] quiz added, id=" << newId << ", type=" << examType << std::endl;
 }
 
-// EDIT_QUIZ|quizId|title|desc|count|time
+// EDIT_QUIZ|quizId|title|desc|count|time|type|delay_minutes
+// Format: EDIT_QUIZ|quizId|title|desc|count|time (normal exam)
+//         EDIT_QUIZ|quizId|title|desc|count|time|normal (explicitly normal)
+//         EDIT_QUIZ|quizId|title|desc|count|time|scheduled|delay_minutes (scheduled exam)
 void handleEditQuiz(const std::vector<std::string> &parts, int sock, DbManager *db) {
-    if (parts.size() != 6) {
+    if (parts.size() < 6) {
         sendLine(sock, "EDIT_QUIZ_FAIL|reason=bad_format");
         return;
     }
@@ -126,13 +151,44 @@ void handleEditQuiz(const std::vector<std::string> &parts, int sock, DbManager *
 
     std::string title = escapeSql(parts[2]);
     std::string desc  = escapeSql(parts[3]);
+    
+    // Parse exam type (default: normal)
+    std::string examType = "normal";
+    std::string examStartTime = "NULL";
+    std::string examEndTime = "NULL";
+    
+    if (parts.size() >= 7) {
+        examType = parts[6]; // "normal" hoặc "scheduled"
+        
+        if (examType == "scheduled") {
+            if (parts.size() < 8) {
+                sendLine(sock, "EDIT_QUIZ_FAIL|reason=missing_scheduled_time");
+                return;
+            }
+            
+            try {
+                int delaySeconds = std::stoi(parts[7]);    // Số giây delay từ bây giờ
+                
+                // Tính toán end_time dựa trên timeLimit (đã tính bằng giây)
+                
+                examStartTime = "DATE_ADD(NOW(), INTERVAL " + std::to_string(delaySeconds) + " SECOND)";
+                examEndTime = "DATE_ADD(NOW(), INTERVAL " + std::to_string(delaySeconds + timeLimit) + " SECOND)";
+            } catch (...) {
+                sendLine(sock, "EDIT_QUIZ_FAIL|reason=bad_schedule_number");
+                return;
+            }
+        }
+    }
 
     std::string q =
         "UPDATE Quizzes SET "
         "title='" + title + "', "
         "description='" + desc + "', "
         "question_count=" + std::to_string(count) + ", "
-        "time_limit=" + std::to_string(timeLimit) +
+        "time_limit=" + std::to_string(timeLimit) + ", "
+        "exam_type='" + examType + "', "
+        "exam_start_time=" + examStartTime + ", "
+        "exam_end_time=" + examEndTime +
         " WHERE quiz_id=" + std::to_string(quizId) + ";";
 
     try {
@@ -196,6 +252,63 @@ void handleDeleteQuiz(const std::vector<std::string> &parts, int sock, DbManager
     } catch (sql::SQLException &e) {
         std::cerr << "[DELETE_QUIZ] SQL error: " << e.what() << std::endl;
         sendLine(sock, "DELETE_QUIZ_FAIL|reason=sql_error");
+    }
+}
+
+// Auto-update scheduled quiz status based on current time
+void updateScheduledQuizStatus(DbManager *db) {
+    try {
+        // Update to 'in_progress' if current time is between start and end time
+        std::string q1 = 
+            "UPDATE Quizzes SET status='in_progress' "
+            "WHERE exam_type='scheduled' AND status='not_started' "
+            "AND NOW() >= exam_start_time AND NOW() < exam_end_time;";
+        db->executeUpdate(q1);
+        
+        // Update to 'finished' if current time is past end time
+        std::string q2 = 
+            "UPDATE Quizzes SET status='finished' "
+            "WHERE exam_type='scheduled' AND status IN ('not_started', 'in_progress') "
+            "AND NOW() >= exam_end_time;";
+        db->executeUpdate(q2);
+    } catch (sql::SQLException &e) {
+        std::cerr << "[UPDATE_SCHEDULED] SQL error: " << e.what() << std::endl;
+    }
+}
+
+// STATUS_QUIZ|quizId|newStatus
+void handleStatusQuiz(const std::vector<std::string> &parts, int sock, DbManager *db) {
+    if (parts.size() != 3) {
+        sendLine(sock, "STATUS_QUIZ_FAIL|reason=bad_format");
+        return;
+    }
+    
+    int quizId;
+    try {
+        quizId = std::stoi(parts[1]);
+    } catch (...) {
+        sendLine(sock, "STATUS_QUIZ_FAIL|reason=bad_number");
+        return;
+    }
+    
+    std::string newStatus = escapeSql(parts[2]);
+    
+    // Validate status
+    if (newStatus != "not_started" && newStatus != "in_progress" && newStatus != "finished") {
+        sendLine(sock, "STATUS_QUIZ_FAIL|reason=invalid_status");
+        return;
+    }
+    
+    try {
+        std::string q = 
+            "UPDATE Quizzes SET status='" + newStatus + "' "
+            "WHERE quiz_id=" + std::to_string(quizId) + ";";
+        db->executeUpdate(q);
+        sendLine(sock, "STATUS_QUIZ_OK");
+        std::cout << "[STATUS_QUIZ] Quiz " << quizId << " status changed to " << newStatus << std::endl;
+    } catch (sql::SQLException &e) {
+        std::cerr << "[STATUS_QUIZ] SQL error: " << e.what() << std::endl;
+        sendLine(sock, "STATUS_QUIZ_FAIL|reason=sql_error");
     }
 }
 

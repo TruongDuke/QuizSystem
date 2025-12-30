@@ -86,11 +86,37 @@ static void load_question_bank(BankTabData *data) {
     }
 }
 
-// Callback: Filter changed
+// Callback: Filter changed - reload both questions and quiz list
 static void on_bank_filter_changed(GtkWidget *widget, gpointer user_data) {
     (void)widget;
     BankTabData *data = (BankTabData*)user_data;
+    
+    // Reload questions
     load_question_bank(data);
+    
+    // Reload quiz list
+    gtk_list_store_clear(data->quiz_store);
+    sendLine(data->sock, "LIST_QUIZZES");
+    if (hasData(data->sock, 1)) {
+        std::string resp = recvLine(data->sock);
+        if (resp.find("QUIZZES|") == 0) {
+            auto items = split(resp.substr(8), ';');
+            for (const auto& item : items) {
+                if (item.empty()) continue;
+                size_t colonPos = item.find(':');
+                if (colonPos == std::string::npos) continue;
+                int quiz_id = std::stoi(item.substr(0, colonPos));
+                std::string rest = item.substr(colonPos + 1);
+                size_t openParen = rest.find('(');
+                std::string title = rest.substr(0, openParen);
+                
+                GtkTreeIter iter;
+                gtk_list_store_append(data->quiz_store, &iter);
+                gtk_list_store_set(data->quiz_store, &iter, 0, quiz_id, 1, title.c_str(), -1);
+            }
+            gtk_combo_box_set_active(GTK_COMBO_BOX(data->quiz_combo), 0);
+        }
+    }
 }
 
 // Callback: Add to quiz button
@@ -138,9 +164,25 @@ static void on_add_to_quiz_clicked(GtkWidget *widget, gpointer user_data) {
                 GTK_MESSAGE_INFO, GTK_BUTTONS_OK, "Đã thêm câu hỏi vào quiz!");
             gtk_dialog_run(GTK_DIALOG(info));
             gtk_widget_destroy(info);
+        } else if (resp.find("quota_exceeded") != std::string::npos) {
+            // Parse error message: ADD_TO_QUIZ_FROM_BANK_FAIL|reason=quota_exceeded|current=2|max=2
+            size_t currentPos = resp.find("current=");
+            size_t maxPos = resp.find("max=");
+            std::string errorMsg = "Không thể thêm! Bài thi đã đủ số câu hỏi.";
+            if (currentPos != std::string::npos && maxPos != std::string::npos) {
+                std::string currentStr = resp.substr(currentPos + 8);
+                std::string maxStr = resp.substr(maxPos + 4);
+                size_t pipePos = currentStr.find('|');
+                if (pipePos != std::string::npos) currentStr = currentStr.substr(0, pipePos);
+                errorMsg = "Không thể thêm! Bài thi đã có " + currentStr + "/" + maxStr + " câu hỏi.";
+            }
+            GtkWidget *err = gtk_message_dialog_new(NULL, GTK_DIALOG_MODAL,
+                GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, "%s", errorMsg.c_str());
+            gtk_dialog_run(GTK_DIALOG(err));
+            gtk_widget_destroy(err);
         } else {
             GtkWidget *err = gtk_message_dialog_new(NULL, GTK_DIALOG_MODAL,
-                GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, "Thêm thất bại!");
+                GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, "Thêm thất bại: %s", resp.c_str());
             gtk_dialog_run(GTK_DIALOG(err));
             gtk_widget_destroy(err);
         }
@@ -364,6 +406,11 @@ GtkWidget* createBankTab(int sock) {
     // Buttons row
     GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(btn_box), 5);
+    
+    GtkWidget *refresh_btn = gtk_button_new_with_label("🔄 Làm mới");
+    gtk_widget_set_size_request(refresh_btn, 120, 35);
+    g_signal_connect(refresh_btn, "clicked", G_CALLBACK(on_bank_filter_changed), tabData);
+    gtk_box_pack_start(GTK_BOX(btn_box), refresh_btn, FALSE, FALSE, 0);
     
     GtkWidget *add_bank_btn = gtk_button_new_with_label("➕ Thêm câu hỏi mới vào Bank");
     gtk_widget_set_size_request(add_bank_btn, 220, 35);

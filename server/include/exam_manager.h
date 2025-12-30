@@ -14,6 +14,7 @@ void checkExpiredExams(DbManager* db, ClientManager& clientMgr);
 void submitExam(int examId, DbManager* db);
 void calculateScore(int examId, DbManager* db);
 std::vector<int> getQuestionsForQuiz(int quizId, DbManager* db);
+void handleGetQuizStats(const std::vector<std::string>& parts, int sock, DbManager* db);
 
 #endif // EXAM_MANAGER_H
 

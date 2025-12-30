@@ -67,15 +67,15 @@ static void load_history(HistoryData *data) {
             std::string scoreStr = item.substr(colonPos + 2);
             
             // Remove "đ" suffix
-            if (scoreStr.length() > 0 && scoreStr.back() == 0xC4) {
+            if (scoreStr.length() > 0 && (unsigned char)scoreStr.back() == 0xC4) {
                 scoreStr.pop_back();
             }
-            if (scoreStr.length() > 0 && scoreStr.back() == 0x91) {
+            if (scoreStr.length() > 0 && (unsigned char)scoreStr.back() == 0x91) {
                 scoreStr.pop_back();
             }
             
             // Simple: remove last char if not digit
-            while (!scoreStr.empty() && !isdigit(scoreStr.back())) {
+            while (!scoreStr.empty() && !isdigit((unsigned char)scoreStr.back())) {
                 scoreStr.pop_back();
             }
             

@@ -492,7 +492,7 @@ void handleAnswer(const std::vector<std::string>& parts, int sock,
                   << ", Total questions: " << clientInfo->questionIds.size() << std::endl;
         
         // Check if there are more questions
-        if (clientInfo->currentQuestionIndex < clientInfo->questionIds.size()) {
+        if (clientInfo->currentQuestionIndex < (int)clientInfo->questionIds.size()) {
             // Send next question
             int nextQuestionId = clientInfo->questionIds[clientInfo->currentQuestionIndex];
             std::cout << "[ANSWER] Sending next question " << nextQuestionId << " to client " << sock << std::endl;
@@ -931,6 +931,12 @@ void handleCommand(int clientSock, const std::vector<std::string>& parts,
         else
             sendLine(clientSock, "DELETE_QUIZ_FAIL|reason=permission_denied");
             
+    } else if (cmd == "STATUS_QUIZ") {
+        if (role == "teacher")
+            handleStatusQuiz(parts, clientSock, db);
+        else
+            sendLine(clientSock, "STATUS_QUIZ_FAIL|reason=permission_denied");
+            
     } else if (cmd == "LIST_QUESTIONS") {
         handleListQuestions(parts, clientSock, db);
         
@@ -984,6 +990,13 @@ void handleCommand(int clientSock, const std::vector<std::string>& parts,
             
     } else if (cmd == "LIST_EXAMS") {
         handleListExams(clientSock, db);
+        
+    } else if (cmd == "GET_QUIZ_STATS") {
+        if (clientInfo->role != "teacher") {
+            sendLine(clientSock, "QUIZ_STATS_FAIL|reason=permission_denied");
+        } else {
+            handleGetQuizStats(parts, clientSock, db);
+        }
         
     } else if (cmd == "START_EXAM") {
         if (parts.size() != 2) {

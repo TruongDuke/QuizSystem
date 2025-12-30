@@ -25,6 +25,11 @@ void DbManager::ensureConnection() {
     if (!conn) {
         conn = driver->connect("tcp://" + dbHost + ":3306", dbUser, dbPass);
         conn->setSchema(dbName);
+        
+        // Set timezone to Asia/Ho_Chi_Minh (UTC+7)
+        sql::Statement* stmt = conn->createStatement();
+        stmt->execute("SET time_zone = '+07:00'");
+        delete stmt;
         return;
     }
 
@@ -32,6 +37,11 @@ void DbManager::ensureConnection() {
         delete conn;
         conn = driver->connect("tcp://" + dbHost + ":3306", dbUser, dbPass);
         conn->setSchema(dbName);
+        
+        // Set timezone to Asia/Ho_Chi_Minh (UTC+7)
+        sql::Statement* stmt = conn->createStatement();
+        stmt->execute("SET time_zone = '+07:00'");
+        delete stmt;
     }
 }
  

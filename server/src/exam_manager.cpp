@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <cctype>
 #include <sstream>
+#include <iomanip>
+#include <map>
 
 // ==================================================
 // EXAM OPERATIONS
@@ -359,3 +361,108 @@ std::vector<int> getQuestionsForQuiz(int quizId, DbManager* db) {
     return questionIds;
 }
 
+// GET_QUIZ_STATS|quiz_id
+void handleGetQuizStats(const std::vector<std::string>& parts, int sock, DbManager* db) {
+    if (parts.size() != 2) {
+        sendLine(sock, "QUIZ_STATS_FAIL|reason=bad_format");
+        return;
+    }
+    
+    int quizId;
+    try {
+        quizId = std::stoi(parts[1]);
+    } catch (...) {
+        sendLine(sock, "QUIZ_STATS_FAIL|reason=bad_number");
+        return;
+    }
+    
+    try {
+        // Get average, max score, and total students
+        std::string statsSql = 
+            "SELECT "
+            "  COALESCE(AVG(score), 0) as avg_score, "
+            "  COALESCE(MAX(score), 0) as max_score, "
+            "  COUNT(*) as total_students "
+            "FROM Exams "
+            "WHERE quiz_id = " + std::to_string(quizId) + 
+            " AND status = 'submitted';";
+        
+        sql::ResultSet* statsRes = db->executeQuery(statsSql);
+        if (!statsRes || !statsRes->next()) {
+            delete statsRes;
+            sendLine(sock, "QUIZ_STATS|" + std::to_string(quizId) + "|0|0|0|");
+            return;
+        }
+        
+        double avgScore = statsRes->getDouble("avg_score");
+        double maxScore = statsRes->getDouble("max_score");
+        int totalStudents = statsRes->getInt("total_students");
+        delete statsRes;
+        
+        // Get distribution (score ranges)
+        std::string distSql = 
+            "SELECT "
+            "  CASE "
+            "    WHEN score < 2 THEN '0-2' "
+            "    WHEN score < 4 THEN '2-4' "
+            "    WHEN score < 6 THEN '4-6' "
+            "    WHEN score < 8 THEN '6-8' "
+            "    ELSE '8-10' "
+            "  END as score_range, "
+            "  COUNT(*) as count "
+            "FROM Exams "
+            "WHERE quiz_id = " + std::to_string(quizId) + 
+            " AND status = 'submitted' "
+            "GROUP BY score_range "
+            "ORDER BY score_range;";
+        
+        sql::ResultSet* distRes = db->executeQuery(distSql);
+        
+        // Build distribution string: 0-2:count1,2-4:count2,...
+        std::stringstream distStream;
+        bool first = true;
+        
+        // Initialize all ranges to 0
+        std::map<std::string, int> ranges;
+        ranges["0-2"] = 0;
+        ranges["2-4"] = 0;
+        ranges["4-6"] = 0;
+        ranges["6-8"] = 0;
+        ranges["8-10"] = 0;
+        
+        // Fill with actual data
+        if (distRes) {
+            while (distRes->next()) {
+                std::string range = distRes->getString("score_range");
+                int count = distRes->getInt("count");
+                ranges[range] = count;
+            }
+            delete distRes;
+        }
+        
+        // Build string in order
+        std::vector<std::string> orderedRanges = {"0-2", "2-4", "4-6", "6-8", "8-10"};
+        for (const auto& range : orderedRanges) {
+            if (!first) distStream << ",";
+            first = false;
+            distStream << range << ":" << ranges[range];
+        }
+        
+        // Format: QUIZ_STATS|quiz_id|avg|max|total|distribution
+        std::stringstream response;
+        response << "QUIZ_STATS|" << quizId << "|" 
+                 << std::fixed << std::setprecision(1) << avgScore << "|"
+                 << std::fixed << std::setprecision(1) << maxScore << "|"
+                 << totalStudents << "|" 
+                 << distStream.str();
+        
+        sendLine(sock, response.str());
+        std::cout << "[GET_QUIZ_STATS] Stats for quiz " << quizId 
+                  << ": avg=" << avgScore << ", max=" << maxScore 
+                  << ", total=" << totalStudents << std::endl;
+        
+    } catch (sql::SQLException& e) {
+        std::cerr << "[GET_QUIZ_STATS] SQL error: " << e.what() << std::endl;
+        sendLine(sock, "QUIZ_STATS_FAIL|reason=sql_error");
+    }
+}

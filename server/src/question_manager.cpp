@@ -78,6 +78,37 @@ void handleAddQuestion(const std::vector<std::string> &parts, int sock, DbManage
     
 
     try {
+        // First, get quiz question_count limit
+        std::string quizQuery = "SELECT question_count FROM Quizzes WHERE quiz_id=" + 
+                               std::to_string(quizId) + ";";
+        sql::ResultSet *qzRes = db->executeQuery(quizQuery);
+        if (!qzRes || !qzRes->next()) {
+            if (qzRes) delete qzRes;
+            sendLine(sock, "ADD_QUESTION_FAIL|reason=quiz_not_found");
+            return;
+        }
+        int maxCount = qzRes->getInt("question_count");
+        delete qzRes;
+        
+        // Then, count current questions
+        std::string countQuery = "SELECT COUNT(*) as current_count FROM Questions WHERE quiz_id=" + 
+                                std::to_string(quizId) + ";";
+        sql::ResultSet *countRes = db->executeQuery(countQuery);
+        int currentCount = 0;
+        if (countRes && countRes->next()) {
+            currentCount = countRes->getInt("current_count");
+        }
+        if (countRes) delete countRes;
+        
+        // Check if we can add more
+        if (currentCount >= maxCount) {
+            sendLine(sock, "ADD_QUESTION_FAIL|reason=quota_exceeded|current=" + 
+                     std::to_string(currentCount) + "|max=" + std::to_string(maxCount));
+            std::cout << "[ADD_QUESTION] Quota exceeded for quiz " << quizId 
+                      << ": " << currentCount << "/" << maxCount << std::endl;
+            return;
+        }
+        
         // 1) Questions
         std::string qInsert =
             "INSERT INTO Questions (quiz_id, question_text, difficulty, topic) "
@@ -411,6 +442,37 @@ void handleAddToQuizFromBank(const std::vector<std::string> &parts, int sock, Db
     }
 
     try {
+        // First, get quiz question_count limit
+        std::string quizQuery = "SELECT question_count FROM Quizzes WHERE quiz_id=" + 
+                               std::to_string(quizId) + ";";
+        sql::ResultSet *qzRes = db->executeQuery(quizQuery);
+        if (!qzRes || !qzRes->next()) {
+            if (qzRes) delete qzRes;
+            sendLine(sock, "ADD_TO_QUIZ_FROM_BANK_FAIL|reason=quiz_not_found");
+            return;
+        }
+        int maxCount = qzRes->getInt("question_count");
+        delete qzRes;
+        
+        // Then, count current questions
+        std::string countQuery = "SELECT COUNT(*) as current_count FROM Questions WHERE quiz_id=" + 
+                                std::to_string(quizId) + ";";
+        sql::ResultSet *countRes = db->executeQuery(countQuery);
+        int currentCount = 0;
+        if (countRes && countRes->next()) {
+            currentCount = countRes->getInt("current_count");
+        }
+        if (countRes) delete countRes;
+        
+        // Check if we can add more
+        if (currentCount >= maxCount) {
+            sendLine(sock, "ADD_TO_QUIZ_FROM_BANK_FAIL|reason=quota_exceeded|current=" + 
+                     std::to_string(currentCount) + "|max=" + std::to_string(maxCount));
+            std::cout << "[ADD_TO_QUIZ_FROM_BANK] Quota exceeded for quiz " << quizId 
+                      << ": " << currentCount << "/" << maxCount << std::endl;
+            return;
+        }
+        
         // Lấy thông tin câu hỏi từ ngân hàng
         std::string qQuery = 
             "SELECT question_text, difficulty, topic FROM QuestionBank "
