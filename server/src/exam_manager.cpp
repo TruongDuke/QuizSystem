@@ -361,6 +361,29 @@ std::vector<int> getQuestionsForQuiz(int quizId, DbManager* db) {
     return questionIds;
 }
 
+// Get exam progress - count number of answered questions from Exam_Answers
+int getExamProgress(int examId, DbManager* db) {
+    try {
+        std::string sql = 
+            "SELECT COUNT(DISTINCT question_id) as answered_count "
+            "FROM Exam_Answers "
+            "WHERE exam_id = " + std::to_string(examId) + ";";
+        
+        sql::ResultSet* res = db->executeQuery(sql);
+        if (res && res->next()) {
+            int count = res->getInt("answered_count");
+            delete res;
+            std::cout << "[GET_EXAM_PROGRESS] Exam " << examId << " progress: " << count << " questions answered" << std::endl;
+            return count;
+        }
+        delete res;
+        return 0;
+    } catch (sql::SQLException& e) {
+        std::cerr << "[GET_EXAM_PROGRESS] SQL error: " << e.what() << std::endl;
+        return 0;
+    }
+}
+
 // GET_QUIZ_STATS|quiz_id
 void handleGetQuizStats(const std::vector<std::string>& parts, int sock, DbManager* db) {
     if (parts.size() != 2) {

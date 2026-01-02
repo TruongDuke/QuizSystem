@@ -490,7 +490,7 @@ ExamResult showExamWindow(int sock, int quizId, const std::string &quizTitle)
     std::cout << "[DEBUG] Join response: " << response << std::endl;
 
     auto parts = split(response, '|');
-    if (parts.empty() || parts[0] != "TEST_STARTED")
+    if (parts.empty() || (parts[0] != "TEST_STARTED" && parts[0] != "TEST_RESUMED"))
     {
         GtkWidget *dialog = gtk_message_dialog_new(
             NULL, GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
@@ -500,9 +500,12 @@ ExamResult showExamWindow(int sock, int quizId, const std::string &quizTitle)
         return result;
     }
 
-    // TEST_STARTED|timeLimit|examType|totalQuestions
+    // TEST_STARTED|timeLimit|examType|totalQuestions|startIndex (optional)
+    // TEST_RESUMED|timeLimit|examType|totalQuestions|startIndex
+    bool isResumed = (parts[0] == "TEST_RESUMED");
     int timeLimit = 600; // Default 10 minutes
     int totalQuestions = 0;
+    int startIndex = 0;
     if (parts.size() >= 2)
     {
         timeLimit = std::stoi(parts[1]);
@@ -510,6 +513,15 @@ ExamResult showExamWindow(int sock, int quizId, const std::string &quizTitle)
     if (parts.size() >= 4)
     {
         totalQuestions = std::stoi(parts[3]);
+    }
+    if (parts.size() >= 5)
+    {
+        startIndex = std::stoi(parts[4]);
+    }
+    
+    if (isResumed)
+    {
+        std::cout << "[Exam] RESUMED at question index: " << startIndex << std::endl;
     }
 
     std::cout << "[Exam] Time limit: " << timeLimit << " seconds\n";
@@ -524,7 +536,7 @@ ExamResult showExamWindow(int sock, int quizId, const std::string &quizTitle)
     ExamData *data = new ExamData();
     data->window = window;
     data->sock = sock;
-    data->currentIndex = 0;
+    data->currentIndex = startIndex; // Set to resume index if resuming
     data->totalQuestions = totalQuestions;
     data->remainingSeconds = timeLimit;
     data->timer_id = 0;
@@ -632,8 +644,8 @@ ExamResult showExamWindow(int sock, int quizId, const std::string &quizTitle)
     // Start countdown timer (1 second interval)
     data->timer_id = g_timeout_add(1000, update_timer, data);
 
-    // Request first question
-    request_question(data, 0);
+    // Request question at startIndex (first question or resumed position)
+    request_question(data, startIndex);
 
     gtk_widget_show_all(window);
     gtk_main();

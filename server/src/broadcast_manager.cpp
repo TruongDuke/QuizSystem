@@ -2,6 +2,7 @@
 #include "../include/client_manager.h"
 #include "../include/protocol_manager.h"
 
+
 BroadcastManager& BroadcastManager::getInstance() {
     static BroadcastManager instance;
     return instance;

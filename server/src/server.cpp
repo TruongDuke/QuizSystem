@@ -310,34 +310,125 @@ void handleJoinRoom(const std::vector<std::string>& parts, int sock,
             }
         }
         
-        // Start exam
-        int examId = startExam(clientInfo->userId, quizId, db);
-        if (examId <= 0) {
-            sendLine(sock, "JOIN_FAIL|reason=failed_to_start_exam");
-            return;
-        }
+        // Check if user already has an in_progress exam for this quiz
+        std::string checkExistingSql = 
+            "SELECT exam_id FROM Exams "
+            "WHERE user_id = " + std::to_string(clientInfo->userId) +
+            " AND quiz_id = " + std::to_string(quizId) +
+            " AND status = 'in_progress';";
         
-        // Get questions for this quiz
-        std::vector<int> questionIds = getQuestionsForQuiz(quizId, db);
-        if (questionIds.empty()) {
-            sendLine(sock, "JOIN_FAIL|reason=no_questions_available");
-            return;
+        sql::ResultSet* existingRes = db->executeQuery(checkExistingSql);
+        bool hasExistingExam = false;
+        int existingExamId = 0;
+        
+        if (existingRes && existingRes->next()) {
+            hasExistingExam = true;
+            existingExamId = existingRes->getInt("exam_id");
+            std::cout << "[JOIN_ROOM] Found existing exam " << existingExamId << std::endl;
+        }
+        delete existingRes;
+        
+        int examId;
+        int startQuestionIndex = 0;
+        std::vector<int> questionIds;
+        bool isResume = false;
+        
+        if (hasExistingExam) {
+            // RESUME existing exam
+            examId = existingExamId;
+            isResume = true;
+            
+            // Get question list
+            questionIds = getQuestionsForQuiz(quizId, db);
+            if (questionIds.empty()) {
+                sendLine(sock, "JOIN_FAIL|reason=no_questions_available");
+                return;
+            }
+            
+            // Calculate progress from Exam_Answers
+            int answeredCount = getExamProgress(examId, db);
+            startQuestionIndex = answeredCount; // After answering N questions, index = N
+            
+            // Validate index
+            if (startQuestionIndex < 0) startQuestionIndex = 0;
+            if (startQuestionIndex > (int)questionIds.size()) {
+                startQuestionIndex = questionIds.size(); // All answered, should submit
+            }
+            
+            std::cout << "[JOIN_ROOM] RESUMING exam " << examId 
+                      << ", answered " << answeredCount << " questions, "
+                      << "starting at index " << startQuestionIndex << std::endl;
+            
+            // Check if exam should be submitted (all questions answered)
+            if (startQuestionIndex >= (int)questionIds.size()) {
+                // All questions answered, auto-submit
+                submitExam(examId, db);
+                
+                // Get score
+                std::string getScoreSql = 
+                    "SELECT score FROM Exams WHERE exam_id = " + 
+                    std::to_string(examId) + ";";
+                sql::ResultSet* scoreRes = db->executeQuery(getScoreSql);
+                double score = 0.0;
+                int correctCount = 0;
+                if (scoreRes && scoreRes->next()) {
+                    score = scoreRes->getDouble("score");
+                    if (score > 0 && questionIds.size() > 0) {
+                        correctCount = int((score / 10.0) * questionIds.size() + 0.5);
+                    }
+                }
+                delete scoreRes;
+                
+                // Reset client state
+                clientInfo->currentExamId = 0;
+                clientInfo->currentQuestionIndex = 0;
+                clientInfo->questionIds.clear();
+                
+                // Send END_EXAM
+                std::stringstream ss;
+                ss << "END_EXAM|" << score << "|" << correctCount;
+                sendLine(sock, ss.str());
+                std::cout << "[JOIN_ROOM] Auto-submitted exam " << examId << " (all questions answered)" << std::endl;
+                return;
+            }
+        } else {
+            // START new exam
+            examId = startExam(clientInfo->userId, quizId, db);
+            if (examId <= 0) {
+                sendLine(sock, "JOIN_FAIL|reason=failed_to_start_exam");
+                return;
+            }
+            
+            questionIds = getQuestionsForQuiz(quizId, db);
+            if (questionIds.empty()) {
+                sendLine(sock, "JOIN_FAIL|reason=no_questions_available");
+                return;
+            }
+            
+            startQuestionIndex = 0;
+            std::cout << "[JOIN_ROOM] STARTING new exam " << examId << std::endl;
         }
         
         // Update client info with exam state
         clientInfo->currentExamId = examId;
-        clientInfo->currentQuestionIndex = 0;
+        clientInfo->currentQuestionIndex = startQuestionIndex;
         clientInfo->questionIds = questionIds;
         
-        // Send TEST_STARTED with time limit and total question count
-        // Format: TEST_STARTED|timeLimit|examType|totalQuestions
-        sendLine(sock, "TEST_STARTED|" + std::to_string(actualTimeLimit) + "|" + examType + "|" + std::to_string(questionIds.size()));
+        // Send TEST_STARTED or TEST_RESUMED
+        std::string statusMsg = isResume ? "TEST_RESUMED" : "TEST_STARTED";
+        sendLine(sock, statusMsg + "|" + std::to_string(actualTimeLimit) + "|" + 
+                 examType + "|" + std::to_string(questionIds.size()) + "|" + 
+                 std::to_string(startQuestionIndex));
         
-        // Send first question with navigation info
-        sendQuestionWithInfo(sock, questionIds[0], 0, questionIds.size(), examId, db);
+        // Send the question at startQuestionIndex
+        if (startQuestionIndex < (int)questionIds.size()) {
+            sendQuestionWithInfo(sock, questionIds[startQuestionIndex], 
+                               startQuestionIndex, questionIds.size(), examId, db);
+        }
         
         std::cout << "[JOIN_ROOM] Student " << clientInfo->userId
-                  << " joined quiz " << quizId << ", examId=" << examId << std::endl;
+                  << " joined quiz " << quizId << ", examId=" << examId 
+                  << ", questionIndex=" << startQuestionIndex << std::endl;
         
     } catch (sql::SQLException& e) {
         std::cerr << "[JOIN_ROOM] SQL error: " << e.what() << std::endl;

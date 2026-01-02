@@ -16,5 +16,8 @@ void calculateScore(int examId, DbManager* db);
 std::vector<int> getQuestionsForQuiz(int quizId, DbManager* db);
 void handleGetQuizStats(const std::vector<std::string>& parts, int sock, DbManager* db);
 
+// Get exam progress (number of answered questions from Exam_Answers)
+int getExamProgress(int examId, DbManager* db);
+
 #endif // EXAM_MANAGER_H
 
