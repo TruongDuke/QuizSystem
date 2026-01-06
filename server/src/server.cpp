@@ -355,9 +355,19 @@ void handleJoinRoom(const std::vector<std::string>& parts, int sock,
                 startQuestionIndex = questionIds.size(); // All answered, should submit
             }
             
+            // Get actual remaining time for resume
+            int remainingTime = getRemainingTime(examId, db);
+            if (remainingTime < 0) {
+                // Exam expired or not found
+                sendLine(sock, "JOIN_FAIL|reason=exam_expired");
+                return;
+            }
+            actualTimeLimit = remainingTime; // Use remaining time instead of full time limit
+            
             std::cout << "[JOIN_ROOM] RESUMING exam " << examId 
                       << ", answered " << answeredCount << " questions, "
-                      << "starting at index " << startQuestionIndex << std::endl;
+                      << "starting at index " << startQuestionIndex 
+                      << ", remaining time: " << remainingTime << "s" << std::endl;
             
             // Check if exam should be submitted (all questions answered)
             if (startQuestionIndex >= (int)questionIds.size()) {
