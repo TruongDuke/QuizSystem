@@ -648,3 +648,144 @@ void handleAddToBank(const std::vector<std::string> &parts, int sock, DbManager 
     }
 }
 
+// AUTO_ADD_QUESTIONS|quizId|count|difficulty
+// Auto add random questions from bank to quiz
+void handleAutoAddQuestions(const std::vector<std::string> &parts, int sock, DbManager *db) {
+    if (parts.size() != 4) {
+        sendLine(sock, "AUTO_ADD_QUESTIONS_FAIL|reason=bad_format");
+        return;
+    }
+
+    int quizId, count;
+    try {
+        quizId = std::stoi(parts[1]);
+        count = std::stoi(parts[2]);
+    } catch (...) {
+        sendLine(sock, "AUTO_ADD_QUESTIONS_FAIL|reason=bad_number");
+        return;
+    }
+
+    std::string difficulty = parts[3];
+    
+    // Validate difficulty
+    if (difficulty != "all" && difficulty != "easy" && difficulty != "medium" && difficulty != "hard") {
+        sendLine(sock, "AUTO_ADD_QUESTIONS_FAIL|reason=invalid_difficulty");
+        return;
+    }
+
+    try {
+        // Get quiz info
+        std::string quizQuery = "SELECT question_count FROM Quizzes WHERE quiz_id=" + 
+                               std::to_string(quizId) + ";";
+        sql::ResultSet *qzRes = db->executeQuery(quizQuery);
+        if (!qzRes || !qzRes->next()) {
+            if (qzRes) delete qzRes;
+            sendLine(sock, "AUTO_ADD_QUESTIONS_FAIL|reason=quiz_not_found");
+            return;
+        }
+        int maxCount = qzRes->getInt("question_count");
+        delete qzRes;
+        
+        // Count current questions
+        std::string countQuery = "SELECT COUNT(*) as current_count FROM Questions WHERE quiz_id=" + 
+                                std::to_string(quizId) + ";";
+        sql::ResultSet *countRes = db->executeQuery(countQuery);
+        int currentCount = 0;
+        if (countRes && countRes->next()) {
+            currentCount = countRes->getInt("current_count");
+        }
+        if (countRes) delete countRes;
+        
+        // Check how many we can add
+        int canAdd = maxCount - currentCount;
+        if (canAdd <= 0) {
+            sendLine(sock, "AUTO_ADD_QUESTIONS_FAIL|reason=quota_full|current=" + 
+                     std::to_string(currentCount) + "|max=" + std::to_string(maxCount));
+            return;
+        }
+        
+        // Limit to requested count
+        int toAdd = std::min(canAdd, count);
+        
+        // Get random questions from bank 
+        int fetchLimit = toAdd * 3;
+        std::string bankQuery = "SELECT bank_question_id, question_text, difficulty, topic FROM QuestionBank";
+        if (difficulty != "all") {
+            bankQuery += " WHERE difficulty='" + difficulty + "'";
+        }
+        bankQuery += " ORDER BY RAND() LIMIT " + std::to_string(fetchLimit) + ";";
+        
+        sql::ResultSet *bankRes = db->executeQuery(bankQuery);
+        if (!bankRes) {
+            sendLine(sock, "AUTO_ADD_QUESTIONS_FAIL|reason=db_error");
+            return;
+        }
+        
+        int addedCount = 0;
+        while (bankRes->next() && addedCount < toAdd) {
+            int bankQId = bankRes->getInt("bank_question_id");
+            std::string qText = escapeSql(bankRes->getString("question_text"));
+            std::string diff = bankRes->getString("difficulty");
+            std::string topic = escapeSql(bankRes->getString("topic"));
+            
+            // Add question to quiz
+            std::string insertQ = 
+                "INSERT INTO Questions (quiz_id, question_text, difficulty, topic) "
+                "VALUES (" + std::to_string(quizId) + ", '" + qText + 
+                "', '" + diff + "', '" + topic + "');";
+            
+            int questionId = db->executeInsertAndGetId(insertQ);
+            if (questionId == 0) {
+                std::cerr << "[AUTO_ADD] Failed to insert question from bank " << bankQId << std::endl;
+                continue;
+            }
+            
+            // Copy answers
+            std::string ansQuery = 
+                "SELECT answer_text, is_correct FROM BankAnswers "
+                "WHERE bank_question_id=" + std::to_string(bankQId) + ";";
+            
+            sql::ResultSet *ansRes = db->executeQuery(ansQuery);
+            if (ansRes) {
+                int answerCount = 0;
+                while (ansRes->next()) {
+                    std::string ansText = escapeSql(ansRes->getString("answer_text"));
+                    bool isCorrect = ansRes->getBoolean("is_correct");
+                    
+                    std::string insertAns = 
+                        "INSERT INTO Answers (question_id, answer_text, is_correct) "
+                        "VALUES (" + std::to_string(questionId) + ", '" + ansText + 
+                        "', " + (isCorrect ? "1" : "0") + ");";
+                    
+                    db->executeUpdate(insertAns);
+                    answerCount++;
+                }
+                delete ansRes;
+                
+                if (answerCount > 0) {
+                    addedCount++;
+                } else {
+                    // Delete question if no answers
+                    std::string delQ = "DELETE FROM Questions WHERE question_id=" + 
+                                      std::to_string(questionId) + ";";
+                    db->executeUpdate(delQ);
+                }
+            }
+        }
+        delete bankRes;
+        
+        if (addedCount == 0) {
+            sendLine(sock, "AUTO_ADD_QUESTIONS_FAIL|reason=no_questions_available");
+        } else {
+            sendLine(sock, "AUTO_ADD_QUESTIONS_OK|added=" + std::to_string(addedCount) + 
+                     "|requested=" + std::to_string(count));
+            std::cout << "[AUTO_ADD] Added " << addedCount << " questions to quiz " << quizId << std::endl;
+        }
+        
+    } catch (sql::SQLException &e) {
+        std::cerr << "[AUTO_ADD_QUESTIONS] SQL error: " << e.what() << std::endl;
+        sendLine(sock, "AUTO_ADD_QUESTIONS_FAIL|reason=sql_error");
+    }
+}
+
+

@@ -12,7 +12,7 @@
 // ==================================================
 
 // LIST_QUIZZES
-void handleListQuizzes(int sock, DbManager *db) {
+void handleListQuizzes(int sock, DbManager *db, const std::string& role) {
     // Auto-update scheduled quiz status first
     updateScheduledQuizStatus(db);
     
@@ -28,13 +28,12 @@ void handleListQuizzes(int sock, DbManager *db) {
             return;
         }
 
-        // format: QUIZZES|id:title(count,time,status,type,start,end);id2:...
+        // format: QUIZZES|id:title(count,time,status,type,start,end,actual);id2:...
+        // actual is only included for teachers
         std::stringstream ss;
         ss << "QUIZZES|";
         bool first = true;
         while (res->next()) {
-            if (!first) ss << ";";
-            first = false;
             int id = res->getInt("quiz_id");
             std::string title = res->getString("title");
             int cnt = res->getInt("question_count");
@@ -44,9 +43,36 @@ void handleListQuizzes(int sock, DbManager *db) {
             std::string startTime = res->isNull("exam_start_time") ? "NULL" : res->getString("exam_start_time");
             std::string endTime = res->isNull("exam_end_time") ? "NULL" : res->getString("exam_end_time");
 
+            // Count actual questions in this quiz
+            std::string countQuery = "SELECT COUNT(*) as actual_count FROM Questions WHERE quiz_id=" + 
+                                    std::to_string(id) + ";";
+            sql::ResultSet *countRes = db->executeQuery(countQuery);
+            int actualCount = 0;
+            if (countRes && countRes->next()) {
+                actualCount = countRes->getInt("actual_count");
+            }
+            if (countRes) delete countRes;
+            
+            // Filter for students: only show quizzes with enough questions
+            if (role == "student") {
+                // Skip if not enough questions
+                if (actualCount < cnt) {
+                    continue;
+                }
+            }
+
+            if (!first) ss << ";";
+            first = false;
             ss << id << ":" << title << "("
                << cnt << "Q," << t << "s," << status << ","
-               << examType << "," << startTime << "," << endTime << ")";
+               << examType << "," << startTime << "," << endTime;
+            
+            // Add actual count for teachers
+            if (role == "teacher" || role == "admin") {
+                ss << "," << actualCount;
+            }
+            
+            ss << ")";
         }
         delete res;
 
@@ -57,9 +83,9 @@ void handleListQuizzes(int sock, DbManager *db) {
     }
 }
 
-// ADD_QUIZ|title|desc|count|time|type|delay_minutes
+// ADD_QUIZ|title|desc|count|time|type|start_datetime|end_datetime
 // Format: ADD_QUIZ|title|desc|count|time (normal exam)
-//         ADD_QUIZ|title|desc|count|time|scheduled|delay_minutes (scheduled exam)
+//         ADD_QUIZ|title|desc|count|time|scheduled|YYYY-MM-DD HH:MM|YYYY-MM-DD HH:MM (scheduled exam)
 void handleAddQuiz(const std::vector<std::string> &parts, int sock, DbManager *db) {
     if (parts.size() < 5) {
         sendLine(sock, "ADD_QUIZ_FAIL|reason=bad_format");
@@ -88,25 +114,24 @@ void handleAddQuiz(const std::vector<std::string> &parts, int sock, DbManager *d
         examType = parts[5]; // "normal" hoặc "scheduled"
         
         if (examType == "scheduled") {
-            if (parts.size() < 7) {
+            if (parts.size() < 8) {
                 sendLine(sock, "ADD_QUIZ_FAIL|reason=missing_scheduled_time");
                 return;
             }
             
-            try {
-                int delaySeconds = std::stoi(parts[6]);    // Số giây delay từ bây giờ
-                
-                // Tính toán start_time = NOW() + delay_seconds
-                // Tính toán end_time = start_time + timeLimit (đã có sẵn)
-                // timeLimit đang tính bằng giây
-                
-                examStartTime = "DATE_ADD(NOW(), INTERVAL " + std::to_string(delaySeconds) + " SECOND)";
-                examEndTime = "DATE_ADD(NOW(), INTERVAL " + std::to_string(delaySeconds + timeLimit) + " SECOND)";
-                defaultStatus = "not_started"; // Scheduled quiz chờ đến thời gian
-            } catch (...) {
-                sendLine(sock, "ADD_QUIZ_FAIL|reason=bad_schedule_number");
+            // Parse datetime strings: YYYY-MM-DD HH:MM
+            std::string startDateTime = parts[6];
+            std::string endDateTime = parts[7];
+            
+            // Validate format (basic check)
+            if (startDateTime.length() < 16 || endDateTime.length() < 16) {
+                sendLine(sock, "ADD_QUIZ_FAIL|reason=bad_datetime_format");
                 return;
             }
+            
+            examStartTime = "'" + startDateTime + ":00'";
+            examEndTime = "'" + endDateTime + ":00'";
+            defaultStatus = "not_started"; // Scheduled quiz chờ đến thời gian
         }
     }
 
@@ -129,10 +154,10 @@ void handleAddQuiz(const std::vector<std::string> &parts, int sock, DbManager *d
     std::cout << "[ADD_QUIZ] quiz added, id=" << newId << ", type=" << examType << std::endl;
 }
 
-// EDIT_QUIZ|quizId|title|desc|count|time|type|delay_minutes
+// EDIT_QUIZ|quizId|title|desc|count|time|type|start_datetime|end_datetime
 // Format: EDIT_QUIZ|quizId|title|desc|count|time (normal exam)
 //         EDIT_QUIZ|quizId|title|desc|count|time|normal (explicitly normal)
-//         EDIT_QUIZ|quizId|title|desc|count|time|scheduled|delay_minutes (scheduled exam)
+//         EDIT_QUIZ|quizId|title|desc|count|time|scheduled|YYYY-MM-DD HH:MM|YYYY-MM-DD HH:MM (scheduled exam)
 void handleEditQuiz(const std::vector<std::string> &parts, int sock, DbManager *db) {
     if (parts.size() < 6) {
         sendLine(sock, "EDIT_QUIZ_FAIL|reason=bad_format");
@@ -161,22 +186,23 @@ void handleEditQuiz(const std::vector<std::string> &parts, int sock, DbManager *
         examType = parts[6]; // "normal" hoặc "scheduled"
         
         if (examType == "scheduled") {
-            if (parts.size() < 8) {
+            if (parts.size() < 9) {
                 sendLine(sock, "EDIT_QUIZ_FAIL|reason=missing_scheduled_time");
                 return;
             }
             
-            try {
-                int delaySeconds = std::stoi(parts[7]);    // Số giây delay từ bây giờ
-                
-                // Tính toán end_time dựa trên timeLimit (đã tính bằng giây)
-                
-                examStartTime = "DATE_ADD(NOW(), INTERVAL " + std::to_string(delaySeconds) + " SECOND)";
-                examEndTime = "DATE_ADD(NOW(), INTERVAL " + std::to_string(delaySeconds + timeLimit) + " SECOND)";
-            } catch (...) {
-                sendLine(sock, "EDIT_QUIZ_FAIL|reason=bad_schedule_number");
+            // Parse datetime strings: YYYY-MM-DD HH:MM
+            std::string startDateTime = parts[7];
+            std::string endDateTime = parts[8];
+            
+            // Validate format (basic check)
+            if (startDateTime.length() < 16 || endDateTime.length() < 16) {
+                sendLine(sock, "EDIT_QUIZ_FAIL|reason=bad_datetime_format");
                 return;
             }
+            
+            examStartTime = "'" + startDateTime + ":00'";
+            examEndTime = "'" + endDateTime + ":00'";
         }
     }
 

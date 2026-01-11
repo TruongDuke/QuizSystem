@@ -18,6 +18,7 @@ void handleListQuestionBank(const std::vector<std::string> &parts, int sock, DbM
 void handleGetQuestionBank(const std::vector<std::string> &parts, int sock, DbManager *db);
 void handleAddToQuizFromBank(const std::vector<std::string> &parts, int sock, DbManager *db);
 void handleAddToBank(const std::vector<std::string> &parts, int sock, DbManager *db, int userId);
+void handleAutoAddQuestions(const std::vector<std::string> &parts, int sock, DbManager *db);
 
 #endif // QUESTION_MANAGER_H
 

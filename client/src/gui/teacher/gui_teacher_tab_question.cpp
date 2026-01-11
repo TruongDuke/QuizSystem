@@ -286,7 +286,7 @@ static void on_question_add_clicked(GtkWidget *widget, gpointer user_data) {
                 gtk_widget_destroy(err);
             } else {
                 GtkWidget *err = gtk_message_dialog_new(NULL, GTK_DIALOG_MODAL,
-                    GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, "Thêm câu hỏi thất bại:\n%s", resp.c_str());
+                    GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, "Thêm câu hỏi thất bại: %s", resp.c_str());
                 gtk_dialog_run(GTK_DIALOG(err));
                 gtk_widget_destroy(err);
             }
@@ -461,7 +461,7 @@ static void on_question_delete_clicked(GtkWidget *widget, gpointer user_data) {
     GtkWidget *dialog = gtk_message_dialog_new(
         NULL, GTK_DIALOG_MODAL,
         GTK_MESSAGE_QUESTION, GTK_BUTTONS_YES_NO,
-        "Xác nhận xóa câu hỏi?\n\n%s", content
+        "Xác nhận xóa câu hỏi: %s", content
     );
     
     int response = gtk_dialog_run(GTK_DIALOG(dialog));

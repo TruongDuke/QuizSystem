@@ -189,6 +189,126 @@ static void on_add_to_quiz_clicked(GtkWidget *widget, gpointer user_data) {
     }
 }
 
+// Callback: Auto add questions button
+static void on_auto_add_clicked(GtkWidget *widget, gpointer user_data) {
+    (void)widget;
+    BankTabData *data = (BankTabData*)user_data;
+    
+    // Get selected quiz
+    GtkTreeIter quiz_iter;
+    if (!gtk_combo_box_get_active_iter(GTK_COMBO_BOX(data->quiz_combo), &quiz_iter)) {
+        GtkWidget *err = gtk_message_dialog_new(NULL, GTK_DIALOG_MODAL,
+            GTK_MESSAGE_WARNING, GTK_BUTTONS_OK, "Vui lòng chọn quiz!");
+        gtk_dialog_run(GTK_DIALOG(err));
+        gtk_widget_destroy(err);
+        return;
+    }
+    
+    int quiz_id;
+    gchar *quiz_title;
+    gtk_tree_model_get(GTK_TREE_MODEL(data->quiz_store), &quiz_iter, 
+                       0, &quiz_id, 1, &quiz_title, -1);
+    
+    // Create confirmation dialog
+    GtkWidget *dialog = gtk_dialog_new_with_buttons(
+        "Thêm câu hỏi tự động",
+        NULL,
+        GTK_DIALOG_MODAL,
+        "Hủy", GTK_RESPONSE_CANCEL,
+        "Thêm", GTK_RESPONSE_OK,
+        NULL
+    );
+    gtk_window_set_default_size(GTK_WINDOW(dialog), 400, 250);
+    
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    gtk_container_set_border_width(GTK_CONTAINER(content), 15);
+    
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 10);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 10);
+    
+    // Info label
+    std::string info_text = "Thêm câu hỏi ngẫu nhiên vào:" + 
+                            std::string(quiz_title) + "</b>";
+    GtkWidget *info_label = gtk_label_new(info_text.c_str());
+    gtk_label_set_use_markup(GTK_LABEL(info_label), TRUE);
+    gtk_label_set_line_wrap(GTK_LABEL(info_label), TRUE);
+    gtk_grid_attach(GTK_GRID(grid), info_label, 0, 0, 2, 1);
+    
+    // Number of questions
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Số câu hỏi:"), 0, 1, 1, 1);
+    GtkWidget *count_spin = gtk_spin_button_new_with_range(1, 50, 1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(count_spin), 10);
+    gtk_grid_attach(GTK_GRID(grid), count_spin, 1, 1, 1, 1);
+    
+    // Note
+    GtkWidget *note = gtk_label_new("<i>Lưu ý: Câu hỏi sẽ được chọn ngẫu nhiên từ ngân hàng câu hỏi.</i>");
+    gtk_label_set_use_markup(GTK_LABEL(note), TRUE);
+    gtk_label_set_line_wrap(GTK_LABEL(note), TRUE);
+    gtk_widget_set_margin_top(note, 10);
+    gtk_grid_attach(GTK_GRID(grid), note, 0, 2, 2, 1);
+    
+    gtk_container_add(GTK_CONTAINER(content), grid);
+    gtk_widget_show_all(dialog);
+    
+    int response = gtk_dialog_run(GTK_DIALOG(dialog));
+    
+    if (response == GTK_RESPONSE_OK) {
+        int count = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(count_spin));
+        
+        // AUTO_ADD_QUESTIONS|quizId|count|difficulty (always "all")
+        std::string msg = "AUTO_ADD_QUESTIONS|" + std::to_string(quiz_id) + "|" + 
+                         std::to_string(count) + "|all";
+        
+        sendLine(data->sock, msg);
+        
+        if (hasData(data->sock, 2)) {
+            std::string resp = recvLine(data->sock);
+            std::cout << "[Auto Add] Response: " << resp << std::endl;
+            
+            if (resp.find("AUTO_ADD_QUESTIONS_OK") == 0) {
+                // Parse added count
+                size_t addedPos = resp.find("added=");
+                std::string addedStr = "?";
+                if (addedPos != std::string::npos) {
+                    addedStr = resp.substr(addedPos + 6);
+                    size_t pipePos = addedStr.find('|');
+                    if (pipePos != std::string::npos) {
+                        addedStr = addedStr.substr(0, pipePos);
+                    }
+                }
+                
+                std::string msg = "Đã thêm " + addedStr + " câu hỏi vào quiz!";
+                GtkWidget *info = gtk_message_dialog_new(NULL, GTK_DIALOG_MODAL,
+                    GTK_MESSAGE_INFO, GTK_BUTTONS_OK, "%s", msg.c_str());
+                gtk_dialog_run(GTK_DIALOG(info));
+                gtk_widget_destroy(info);
+            } else if (resp.find("quota_full") != std::string::npos) {
+                GtkWidget *err = gtk_message_dialog_new(NULL, GTK_DIALOG_MODAL,
+                    GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, 
+                    "Quiz đã đủ số câu hỏi!");
+                gtk_dialog_run(GTK_DIALOG(err));
+                gtk_widget_destroy(err);
+            } else if (resp.find("no_questions_available") != std::string::npos) {
+                GtkWidget *err = gtk_message_dialog_new(NULL, GTK_DIALOG_MODAL,
+                    GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, 
+                    "Không đủ câu hỏi trong ngân hàng!");
+                gtk_dialog_run(GTK_DIALOG(err));
+                gtk_widget_destroy(err);
+            } else {
+                GtkWidget *err = gtk_message_dialog_new(NULL, GTK_DIALOG_MODAL,
+                    GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, 
+                    "Thêm thất bại: %s", resp.c_str());
+                gtk_dialog_run(GTK_DIALOG(err));
+                gtk_widget_destroy(err);
+            }
+        }
+    }
+    
+    g_free(quiz_title);
+    gtk_widget_destroy(dialog);
+}
+
 // Callback: Add new question to bank
 static void on_add_to_bank_clicked(GtkWidget *widget, gpointer user_data) {
     (void)widget;
@@ -400,6 +520,11 @@ GtkWidget* createBankTab(int sock) {
     gtk_widget_set_size_request(add_btn, 150, 35);
     g_signal_connect(add_btn, "clicked", G_CALLBACK(on_add_to_quiz_clicked), tabData);
     gtk_box_pack_start(GTK_BOX(header), add_btn, FALSE, FALSE, 0);
+    
+    GtkWidget *auto_add_btn = gtk_button_new_with_label("🎲 Thêm tự động");
+    gtk_widget_set_size_request(auto_add_btn, 150, 35);
+    g_signal_connect(auto_add_btn, "clicked", G_CALLBACK(on_auto_add_clicked), tabData);
+    gtk_box_pack_start(GTK_BOX(header), auto_add_btn, FALSE, FALSE, 0);
     
     gtk_box_pack_start(GTK_BOX(vbox), header, FALSE, FALSE, 0);
     

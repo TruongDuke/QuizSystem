@@ -27,6 +27,7 @@ enum {
     QUIZ_COL_ID,
     QUIZ_COL_TITLE,
     QUIZ_COL_QUESTIONS,
+    QUIZ_COL_ACTUAL,  // Actual question count
     QUIZ_COL_TIME,
     QUIZ_COL_STATUS,
     QUIZ_COL_EXAM_TYPE,
@@ -62,7 +63,7 @@ static void load_quizzes(QuizTabData *data) {
     for (const auto& item : items) {
         if (item.empty()) continue;
         
-        // Parse: "1:Title(10Q,600s,status,type,start,end)"
+        // Parse: "1:Title(10Q,600s,status,type,start,end,actual)"
         size_t colonPos = item.find(':');
         if (colonPos == std::string::npos) continue;
         
@@ -75,7 +76,7 @@ static void load_quizzes(QuizTabData *data) {
         std::string title = rest.substr(0, openParen);
         std::string details = rest.substr(openParen + 1, rest.length() - openParen - 2);
         
-        // Parse details: "10Q,600s,status,type,start,end"
+        // Parse details: "10Q,600s,status,type,start,end,actual"
         auto detailParts = split(details, ',');
         if (detailParts.size() < 3) continue;
         
@@ -85,6 +86,7 @@ static void load_quizzes(QuizTabData *data) {
         std::string examType = detailParts.size() > 3 ? detailParts[3] : "normal";
         std::string startTime = detailParts.size() > 4 ? detailParts[4] : "NULL";
         std::string endTime = detailParts.size() > 5 ? detailParts[5] : "NULL";
+        int actualCount = detailParts.size() > 6 ? std::stoi(detailParts[6]) : 0;
         
         // Remove 'Q' and 's'
         int questions = 0, timeLimit = 0;
@@ -101,6 +103,7 @@ static void load_quizzes(QuizTabData *data) {
             QUIZ_COL_ID, std::stoi(idStr),
             QUIZ_COL_TITLE, title.c_str(),
             QUIZ_COL_QUESTIONS, questions,
+            QUIZ_COL_ACTUAL, actualCount,
             QUIZ_COL_TIME, timeLimit,
             QUIZ_COL_STATUS, status.c_str(),
             QUIZ_COL_EXAM_TYPE, examType.c_str(),
@@ -113,18 +116,24 @@ static void load_quizzes(QuizTabData *data) {
 // Callback for showing/hiding schedule widgets in add quiz dialog
 struct ScheduleWidgets {
     GtkWidget *label;
-    GtkWidget *start_label;
-    GtkWidget *delay_spin;
-    GtkWidget *note_label;
+    GtkWidget *start_date_label;
+    GtkWidget *start_calendar;
+    GtkWidget *start_time_box;
+    GtkWidget *end_date_label;
+    GtkWidget *end_calendar;
+    GtkWidget *end_time_box;
 };
 
 static void on_schedule_toggle_add(GtkToggleButton *btn, gpointer data) {
     gboolean active = gtk_toggle_button_get_active(btn);
     ScheduleWidgets *widgets = (ScheduleWidgets*)data;
     gtk_widget_set_visible(widgets->label, active);
-    gtk_widget_set_visible(widgets->start_label, active);
-    gtk_widget_set_visible(widgets->delay_spin, active);
-    gtk_widget_set_visible(widgets->note_label, active);
+    gtk_widget_set_visible(widgets->start_date_label, active);
+    gtk_widget_set_visible(widgets->start_calendar, active);
+    gtk_widget_set_visible(widgets->start_time_box, active);
+    gtk_widget_set_visible(widgets->end_date_label, active);
+    gtk_widget_set_visible(widgets->end_calendar, active);
+    gtk_widget_set_visible(widgets->end_time_box, active);
 }
 
 // Callback: Refresh button
@@ -147,14 +156,20 @@ static void on_quiz_add_clicked(GtkWidget *widget, gpointer data) {
         "Tạo", GTK_RESPONSE_OK,
         NULL
     );
-    gtk_window_set_default_size(GTK_WINDOW(dialog), 500, 400);
+    gtk_window_set_default_size(GTK_WINDOW(dialog), 600, 650);
     
     GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
     gtk_container_set_border_width(GTK_CONTAINER(content), 15);
     
+    GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), 
+                                   GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    gtk_widget_set_size_request(scroll, -1, 500);
+    
     GtkWidget *grid = gtk_grid_new();
     gtk_grid_set_row_spacing(GTK_GRID(grid), 10);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 10);
+    gtk_container_set_border_width(GTK_CONTAINER(grid), 10);
     
     // Title
     gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Tên bài thi:"), 0, 0, 1, 1);
@@ -196,36 +211,75 @@ static void on_quiz_add_clicked(GtkWidget *widget, gpointer data) {
     gtk_grid_attach(GTK_GRID(grid), type_box, 1, 5, 1, 1);
     
     // Schedule section (initially hidden)
-    GtkWidget *schedule_label = gtk_label_new("Hẹn giờ thi:");
+    int row = 6;
+    GtkWidget *schedule_label = gtk_label_new("<b>Hẹn giờ thi:</b>");
+    gtk_label_set_use_markup(GTK_LABEL(schedule_label), TRUE);
+    gtk_widget_set_halign(schedule_label, GTK_ALIGN_START);
     gtk_widget_set_margin_top(schedule_label, 10);
-    gtk_grid_attach(GTK_GRID(grid), schedule_label, 0, 6, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), schedule_label, 0, row++, 2, 1);
     
-    // Delay start (seconds from now)
-    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("  Bắt đầu sau (giây):"), 0, 8, 1, 1);
-    GtkWidget *delay_spin = gtk_spin_button_new_with_range(1, 86400, 10);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(delay_spin), 60);
-    gtk_grid_attach(GTK_GRID(grid), delay_spin, 1, 7, 1, 1);
+    // Start Date/Time
+    GtkWidget *start_date_label = gtk_label_new("Thời gian bắt đầu:");
+    gtk_widget_set_halign(start_date_label, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), start_date_label, 0, row++, 2, 1);
     
-    GtkWidget *note_label = gtk_label_new("(Thi sẽ kết thúc sau thời gian làm bài)");
-    gtk_widget_set_halign(note_label, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), note_label, 1, 8, 1, 1);
+    GtkWidget *start_calendar = gtk_calendar_new();
+    gtk_grid_attach(GTK_GRID(grid), start_calendar, 0, row++, 2, 1);
+    
+    GtkWidget *start_time_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    gtk_box_pack_start(GTK_BOX(start_time_box), gtk_label_new("Giờ:"), FALSE, FALSE, 0);
+    GtkWidget *start_hour = gtk_spin_button_new_with_range(0, 23, 1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(start_hour), 8);
+    gtk_box_pack_start(GTK_BOX(start_time_box), start_hour, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(start_time_box), gtk_label_new("Phút:"), FALSE, FALSE, 5);
+    GtkWidget *start_minute = gtk_spin_button_new_with_range(0, 59, 1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(start_minute), 0);
+    gtk_box_pack_start(GTK_BOX(start_time_box), start_minute, FALSE, FALSE, 0);
+    gtk_grid_attach(GTK_GRID(grid), start_time_box, 0, row++, 2, 1);
+    
+    // End Date/Time
+    GtkWidget *end_date_label = gtk_label_new("Thời gian kết thúc:");
+    gtk_widget_set_halign(end_date_label, GTK_ALIGN_START);
+    gtk_widget_set_margin_top(end_date_label, 10);
+    gtk_grid_attach(GTK_GRID(grid), end_date_label, 0, row++, 2, 1);
+    
+    GtkWidget *end_calendar = gtk_calendar_new();
+    gtk_grid_attach(GTK_GRID(grid), end_calendar, 0, row++, 2, 1);
+    
+    GtkWidget *end_time_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    gtk_box_pack_start(GTK_BOX(end_time_box), gtk_label_new("Giờ:"), FALSE, FALSE, 0);
+    GtkWidget *end_hour = gtk_spin_button_new_with_range(0, 23, 1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(end_hour), 10);
+    gtk_box_pack_start(GTK_BOX(end_time_box), end_hour, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(end_time_box), gtk_label_new("Phút:"), FALSE, FALSE, 5);
+    GtkWidget *end_minute = gtk_spin_button_new_with_range(0, 59, 1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(end_minute), 0);
+    gtk_box_pack_start(GTK_BOX(end_time_box), end_minute, FALSE, FALSE, 0);
+    gtk_grid_attach(GTK_GRID(grid), end_time_box, 0, row++, 2, 1);
     
     // Initially hide schedule widgets
     gtk_widget_set_visible(schedule_label, FALSE);
-    gtk_widget_set_visible(gtk_grid_get_child_at(GTK_GRID(grid), 0, 7), FALSE);
-    gtk_widget_set_visible(delay_spin, FALSE);
-    gtk_widget_set_visible(note_label, FALSE);
+    gtk_widget_set_visible(start_date_label, FALSE);
+    gtk_widget_set_visible(start_calendar, FALSE);
+    gtk_widget_set_visible(start_time_box, FALSE);
+    gtk_widget_set_visible(end_date_label, FALSE);
+    gtk_widget_set_visible(end_calendar, FALSE);
+    gtk_widget_set_visible(end_time_box, FALSE);
     
     // Connect radio button signals to show/hide schedule widgets
     ScheduleWidgets *schedule_widgets = new ScheduleWidgets{
         schedule_label,
-        gtk_grid_get_child_at(GTK_GRID(grid), 0, 7),
-        delay_spin,
-        note_label
+        start_date_label,
+        start_calendar,
+        start_time_box,
+        end_date_label,
+        end_calendar,
+        end_time_box
     };
     g_signal_connect(radio_scheduled, "toggled", G_CALLBACK(on_schedule_toggle_add), schedule_widgets);
     
-    gtk_container_add(GTK_CONTAINER(content), grid);
+    gtk_container_add(GTK_CONTAINER(scroll), grid);
+    gtk_container_add(GTK_CONTAINER(content), scroll);
     gtk_widget_show_all(dialog);
     
     int response = gtk_dialog_run(GTK_DIALOG(dialog));
@@ -244,6 +298,7 @@ static void on_quiz_add_clicked(GtkWidget *widget, gpointer data) {
                 GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, "Tên bài thi không được để trống!");
             gtk_dialog_run(GTK_DIALOG(err));
             gtk_widget_destroy(err);
+            delete schedule_widgets;
             return;
         }
         
@@ -255,8 +310,42 @@ static void on_quiz_add_clicked(GtkWidget *widget, gpointer data) {
         ss << "ADD_QUIZ|" << title << "|" << desc << "|" << count << "|" << timeSeconds;
         
         if (is_scheduled) {
-            int delay_seconds = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(delay_spin));
-            ss << "|" << examType << "|" << delay_seconds;
+            // Get start date
+            guint s_year, s_month, s_day;
+            gtk_calendar_get_date(GTK_CALENDAR(start_calendar), &s_year, &s_month, &s_day);
+            s_month++; // GTK months are 0-indexed
+            int s_hour = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(start_hour));
+            int s_minute = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(start_minute));
+            
+            // Get end date
+            guint e_year, e_month, e_day;
+            gtk_calendar_get_date(GTK_CALENDAR(end_calendar), &e_year, &e_month, &e_day);
+            e_month++; // GTK months are 0-indexed
+            int e_hour = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(end_hour));
+            int e_minute = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(end_minute));
+            
+            // Format: YYYY-MM-DD HH:MM
+            char start_datetime[20], end_datetime[20];
+            snprintf(start_datetime, sizeof(start_datetime), "%04d-%02d-%02d %02d:%02d",
+                     s_year, s_month, s_day, s_hour, s_minute);
+            snprintf(end_datetime, sizeof(end_datetime), "%04d-%02d-%02d %02d:%02d",
+                     e_year, e_month, e_day, e_hour, e_minute);
+            
+            // Basic validation: start must be before end
+            std::string start_str(start_datetime);
+            std::string end_str(end_datetime);
+            if (start_str >= end_str) {
+                gtk_widget_destroy(dialog);
+                GtkWidget *err = gtk_message_dialog_new(NULL, GTK_DIALOG_MODAL,
+                    GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, 
+                    "Thời gian kết thúc phải sau thời gian bắt đầu!");
+                gtk_dialog_run(GTK_DIALOG(err));
+                gtk_widget_destroy(err);
+                delete schedule_widgets;
+                return;
+            }
+            
+            ss << "|" << examType << "|" << start_datetime << "|" << end_datetime;
         }
         
         sendLine(tabData->sock, ss.str());
@@ -269,13 +358,14 @@ static void on_quiz_add_clicked(GtkWidget *widget, gpointer data) {
                 load_quizzes(tabData);
             } else {
                 GtkWidget *err = gtk_message_dialog_new(NULL, GTK_DIALOG_MODAL,
-                    GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, "Tạo bài thi thất bại:\n%s", resp.c_str());
+                    GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, "Tạo bài thi thất bại: %s", resp.c_str());
                 gtk_dialog_run(GTK_DIALOG(err));
                 gtk_widget_destroy(err);
             }
         }
     }
     
+    delete schedule_widgets;
     gtk_widget_destroy(dialog);
 }
 
@@ -459,7 +549,7 @@ static void on_quiz_edit_clicked(GtkWidget *widget, gpointer data) {
                 load_quizzes(tabData);
             } else {
                 GtkWidget *err = gtk_message_dialog_new(NULL, GTK_DIALOG_MODAL,
-                    GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, "Sửa bài thi thất bại:\n%s", resp.c_str());
+                    GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, "Sửa bài thi thất bại: %s", resp.c_str());
                 gtk_dialog_run(GTK_DIALOG(err));
                 gtk_widget_destroy(err);
             }
@@ -498,7 +588,7 @@ static void on_quiz_delete_clicked(GtkWidget *widget, gpointer data) {
     GtkWidget *dialog = gtk_message_dialog_new(
         NULL, GTK_DIALOG_MODAL,
         GTK_MESSAGE_QUESTION, GTK_BUTTONS_YES_NO,
-        "Xác nhận xóa quiz:\n\n%s (ID: %d)?", title, quiz_id
+        "Xác nhận xóa quiz: %s (ID: %d)?", title, quiz_id
     );
     
     int response = gtk_dialog_run(GTK_DIALOG(dialog));
@@ -567,8 +657,8 @@ static void on_quiz_status_clicked(GtkWidget *widget, gpointer data) {
     }
     
     // Confirmation
-    std::string msg_text = action_text + " quiz:\n\n" + std::string(title) + 
-                          "\n\nTrạng thái: " + current_status + " → " + new_status;
+    std::string msg_text = action_text + " quiz: " + std::string(title) + 
+                          " - Trạng thái: " + current_status + " → " + new_status;
     GtkWidget *dialog = gtk_message_dialog_new(NULL, GTK_DIALOG_MODAL,
         GTK_MESSAGE_QUESTION, GTK_BUTTONS_YES_NO, "%s", msg_text.c_str());
     
@@ -589,7 +679,7 @@ static void on_quiz_status_clicked(GtkWidget *widget, gpointer data) {
             } else {
                 GtkWidget *err = gtk_message_dialog_new(NULL, GTK_DIALOG_MODAL,
                     GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, 
-                    "Thay đổi trạng thái thất bại:\n%s", resp.c_str());
+                    "Thay đổi trạng thái thất bại: %s", resp.c_str());
                 gtk_dialog_run(GTK_DIALOG(err));
                 gtk_widget_destroy(err);
             }
@@ -650,6 +740,7 @@ GtkWidget* createQuizTab(int sock) {
         G_TYPE_INT,      // ID
         G_TYPE_STRING,   // Title
         G_TYPE_INT,      // Questions count
+        G_TYPE_INT,      // Actual count
         G_TYPE_INT,      // Time limit
         G_TYPE_STRING,   // Status
         G_TYPE_STRING,   // Exam type
@@ -672,13 +763,27 @@ GtkWidget* createQuizTab(int sock) {
     // Title column
     renderer = gtk_cell_renderer_text_new();
     column = gtk_tree_view_column_new_with_attributes("Tên bài thi", renderer, "text", QUIZ_COL_TITLE, NULL);
-    gtk_tree_view_column_set_min_width(column, 250);
+    gtk_tree_view_column_set_min_width(column, 220);
     gtk_tree_view_append_column(GTK_TREE_VIEW(tabData->tree_view), column);
     
-    // Questions count column
+    // Questions count column (required/actual)
     renderer = gtk_cell_renderer_text_new();
-    column = gtk_tree_view_column_new_with_attributes("Số câu", renderer, "text", QUIZ_COL_QUESTIONS, NULL);
-    gtk_tree_view_column_set_min_width(column, 70);
+    column = gtk_tree_view_column_new_with_attributes("Câu hỏi", renderer, "text", QUIZ_COL_ACTUAL, NULL);
+    gtk_tree_view_column_set_min_width(column, 80);
+    gtk_tree_view_column_set_cell_data_func(column, renderer,
+        [](GtkTreeViewColumn*, GtkCellRenderer *cell, GtkTreeModel *model, GtkTreeIter *iter, gpointer) {
+            int required, actual;
+            gtk_tree_model_get(model, iter, 
+                               QUIZ_COL_QUESTIONS, &required, 
+                               QUIZ_COL_ACTUAL, &actual, -1);
+            std::string text = std::to_string(actual) + "/" + std::to_string(required);
+            if (actual >= required) {
+                text += " ✓";
+            } else {
+                text += " ⚠";
+            }
+            g_object_set(cell, "text", text.c_str(), NULL);
+        }, NULL, NULL);
     gtk_tree_view_append_column(GTK_TREE_VIEW(tabData->tree_view), column);
     
     // Time limit column
@@ -699,11 +804,6 @@ GtkWidget* createQuizTab(int sock) {
     gtk_tree_view_column_set_min_width(column, 80);
     gtk_tree_view_append_column(GTK_TREE_VIEW(tabData->tree_view), column);
     
-    // Start time column (hidden by default, can be shown if needed)
-    // renderer = gtk_cell_renderer_text_new();
-    // column = gtk_tree_view_column_new_with_attributes("Bắt đầu", renderer, "text", QUIZ_COL_START_TIME, NULL);
-    // gtk_tree_view_column_set_min_width(column, 150);
-    // gtk_tree_view_append_column(GTK_TREE_VIEW(tabData->tree_view), column);
     
     // Scrolled window
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);

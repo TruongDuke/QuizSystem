@@ -1008,7 +1008,7 @@ void handleCommand(int clientSock, const std::vector<std::string>& parts,
     std::string role = clientInfo->role;
     
     if (cmd == "LIST_QUIZZES") {
-        handleListQuizzes(clientSock, db);
+        handleListQuizzes(clientSock, db, role);
         
     } else if (cmd == "ADD_QUIZ") {
         if (role == "teacher") {
@@ -1082,6 +1082,12 @@ void handleCommand(int clientSock, const std::vector<std::string>& parts,
             handleAddToQuizFromBank(parts, clientSock, db);
         else
             sendLine(clientSock, "ADD_TO_QUIZ_FROM_BANK_FAIL|reason=permission_denied");
+            
+    } else if (cmd == "AUTO_ADD_QUESTIONS") {
+        if (role == "teacher")
+            handleAutoAddQuestions(parts, clientSock, db);
+        else
+            sendLine(clientSock, "AUTO_ADD_QUESTIONS_FAIL|reason=permission_denied");
             
     } else if (cmd == "ADD_TO_BANK") {
         if (role == "teacher")

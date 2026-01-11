@@ -7,7 +7,7 @@
 class DbManager;
 
 // Quiz operations
-void handleListQuizzes(int sock, DbManager *db);
+void handleListQuizzes(int sock, DbManager *db, const std::string& role = "");
 void handleAddQuiz(const std::vector<std::string> &parts, int sock, DbManager *db);
 void handleEditQuiz(const std::vector<std::string> &parts, int sock, DbManager *db);
 void handleDeleteQuiz(const std::vector<std::string> &parts, int sock, DbManager *db);
