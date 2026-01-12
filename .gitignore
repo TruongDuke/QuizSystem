@@ -1,0 +1,27 @@
+# Build artifacts
+*.o
+*.out
+build/
+*.so
+*.a
+
+# Executables
+quiz_server
+quiz_client
+quiz_client_gui
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Debug files
+*.dSYM/
+core
+vgcore.*
